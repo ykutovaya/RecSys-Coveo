@@ -1,0 +1,10 @@
+data
+documents/tmp
+
+documents/math/*.synctex.gz
+
+documents/math/*.aux
+documents/math/*.toc
+documents/math/*.log
+documents/math/*.out
+
