@@ -55,11 +55,22 @@ def test_e1_composition_and_future_targets_stay_out_of_prefix():
     package = ROOT / "src/coveo_recsys"
     for directory in ("data", "state"):
         for path in (package / directory).glob("*.py"):
+            allowed = set()
+            if path == package / "data/historical.py":
+                # Исторический вход читает реестр допуска, но не цели или обучение.
+                for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                    if (
+                        isinstance(node, ast.ImportFrom)
+                        and node.module == "coveo_recsys.contracts.training"
+                    ):
+                        assert [alias.name for alias in node.names] == ["SessionRecord"]
+                        allowed.add(node.module)
             assert not any(
                 name.startswith(
                     ("coveo_recsys.targets", "coveo_recsys.contracts.training", "coveo_recsys.cli")
                 )
                 for name in imports(path)
+                if name not in allowed
             ), path
             if directory == "data":
                 assert not any(name.startswith("coveo_recsys.state") for name in imports(path)), (

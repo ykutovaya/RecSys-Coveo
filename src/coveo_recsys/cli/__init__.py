@@ -1,4 +1,4 @@
-"""Команды Э0–Э1; обучение и обслуживание ещё не реализованы."""
+"""Команды подготовки и исторического пакета; обучение ещё не реализовано."""
 
 import argparse
 import json
@@ -68,8 +68,13 @@ def _parser() -> argparse.ArgumentParser:
     supply.add_argument("--max-field-chars", type=int, default=1_048_576)
     supply.add_argument("--max-seconds", type=int, default=7200)
     supply.add_argument("--max-temp-bytes", type=int, default=67_108_864)
+    historical = commands.add_parser("historical", help="Исторический пакет A_G")
+    historical_actions = historical.add_subparsers(dest="action", required=True)
+    historical_build = historical_actions.add_parser("build")
+    historical_build.add_argument("--config", type=Path, required=True)
+    historical_build.add_argument("--run-dir", type=Path, required=True)
+    historical_build.add_argument("--run-id", required=True)
     for name in (
-        "historical",
         "features",
         "train",
         "replay",
@@ -117,7 +122,7 @@ def main(argv: list[str] | None = None) -> int:
             reconfigure(encoding="utf-8")
     parser = _parser()
     args = parser.parse_args(argv)
-    if args.command not in {"environment", "manifest", "data"}:
+    if args.command not in {"environment", "manifest", "data", "historical"}:
         print(f"Команда {args.command} ещё не реализована", file=sys.stderr)
         return 2
     try:
@@ -125,6 +130,16 @@ def main(argv: list[str] | None = None) -> int:
             from coveo_recsys.environment import environment_report
 
             _emit(environment_report(args.project_root))
+            return 0
+        if args.command == "historical":
+            from coveo_recsys.cli.historical import run_historical
+
+            try:
+                result = run_historical(args.project_root, args.config, args.run_dir, args.run_id)
+            except KeyboardInterrupt:
+                _emit({"status": "failed", "reason": "interrupted"})
+                return 130
+            _emit(result)
             return 0
         from coveo_recsys.artifacts import LocalArtifactStore, canonical_json_bytes
 

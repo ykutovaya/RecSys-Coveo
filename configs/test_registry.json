@@ -36,6 +36,31 @@
     "EXPL01"
   ],
   "implemented_checks": {
+    "B04.graph": {
+      "test_id": "B04",
+      "part": "graph",
+      "complete_test": true,
+      "paths": [
+        "tests/unit/test_e2_graph.py",
+        "tests/properties/test_e2_graph_properties.py",
+        "tests/integration/test_e2_historical.py"
+      ],
+      "reference_paths": ["tests/reference/e2_graph_oracle.py"],
+      "coverage": "Вклад и поддержка сессии, три отношения, разреживание, нормировка и регуляризация",
+      "remaining": "Проверка на расширенном A_G в Э2-08"
+    },
+    "B05.content": {
+      "test_id": "B05",
+      "part": "content",
+      "complete_test": false,
+      "paths": [
+        "tests/unit/test_e2_content.py",
+        "tests/properties/test_e2_content_properties.py"
+      ],
+      "reference_paths": ["tests/reference/e2_content_oracle.py"],
+      "coverage": "Раздельные модальности, маски, словарь A_G и порядковая цена",
+      "remaining": "Признаки Э3, производные и LightGBM Э4"
+    },
     "B01.data": {
       "test_id": "B01",
       "part": "data",
@@ -117,12 +142,15 @@
       "part": "disabled_purchase_feature",
       "complete_test": false,
       "paths": [
-        "tests/unit/test_manifest_protocol.py"
+        "tests/unit/test_manifest_protocol.py",
+        "tests/unit/test_e2_statistics.py",
+        "tests/properties/test_e2_statistics_properties.py"
       ],
       "reference_paths": [
-        "tests/reference/manifest_cases.py"
+        "tests/reference/manifest_cases.py",
+        "tests/reference/e2_statistics_oracle.py"
       ],
-      "coverage": "Запрет исторической покупочной частоты в паспорте",
+      "coverage": "Покупочная частота запрещена в паспорте и не рассчитывается в исторических статистиках",
       "remaining": "Отсутствие столбца покупочной частоты в схеме признаков — Э3"
     },
     "B10.periods": {
@@ -133,12 +161,14 @@
         "tests/unit/test_e1_periods.py",
         "tests/properties/test_e1_periods_properties.py",
         "tests/unit/test_e1_access.py",
-        "tests/integration/test_e1_preparation.py"
+        "tests/integration/test_e1_preparation.py",
+        "tests/unit/test_e2_input.py",
+        "tests/unit/test_e2_catalog.py"
       ],
       "reference_paths": [
         "tests/reference/e1_periods_oracle.py"
       ],
-      "coverage": "Семь частей, воспроизводимая подвыборка и запрет закрытых исходов",
+      "coverage": "Семь частей, отбор, запрет закрытых исходов и независимость исторического пакета от поздних периодов",
       "remaining": "Ранжировщик — к post_training, вариант без метаданных — к D"
     },
     "B13.preparation": {
@@ -159,13 +189,15 @@
         "tests/unit/test_e1_verification.py",
         "tests/unit/test_architecture.py",
         "tests/unit/test_supply_reader.py",
-        "tests/integration/test_supply_cli.py"
+        "tests/integration/test_supply_cli.py",
+        "tests/unit/test_e2_input.py",
+        "tests/integration/test_e2_historical.py"
       ],
       "reference_paths": [
         "tests/reference/manifest_cases.py",
         "tests/reference/supply_oracle.py"
       ],
-      "coverage": "Валидатор 2.10, хранение, подготовка Э1 и формат поставки Coveo",
+      "coverage": "Валидатор 2.10, хранение, подготовка Э1, поставка Coveo и согласованность исторического пакета",
       "remaining": "Не подтверждает полноту фактического паспорта или реальный preflight"
     },
     "B05.numerics": {

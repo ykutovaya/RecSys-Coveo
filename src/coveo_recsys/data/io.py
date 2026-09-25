@@ -104,6 +104,11 @@ class CsvProfile:
 def load_profile(path: Path) -> CsvProfile:
     content = path.read_bytes()
     data = _input_json(content)
+    return parse_profile(data, sha256=hashlib.sha256(content).hexdigest())
+
+
+def parse_profile(data: Any, *, sha256: str) -> CsvProfile:
+    """Проверить уже прочитанный профиль без изменения правил его формата."""
     if isinstance(data, dict) and data.get("schema_version") == "coveo_supply_v1":
         from .supply import _profile_files
 
@@ -117,7 +122,7 @@ def load_profile(path: Path) -> CsvProfile:
             dimensions={
                 key: dimensions[key + "_vector"] for key in ("query", "description", "image")
             },
-            sha256=hashlib.sha256(content).hexdigest(),
+            sha256=sha256,
             scope="actual",
             expected_files={table: files[filename] for table, filename in FILES.items()},
             event_types=tuple(data.get("event_type_values", ("event_product", "pageview"))),
@@ -166,7 +171,7 @@ def load_profile(path: Path) -> CsvProfile:
         data["source_namespace"],
         data["columns"],
         data["dimensions"],
-        hashlib.sha256(content).hexdigest(),
+        sha256,
         data["scope"],
         data["max_field_chars"],
         data["max_row_chars"],

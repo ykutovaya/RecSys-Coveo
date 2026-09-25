@@ -32,10 +32,27 @@ def test_removed_registration_and_snapshot_commands_are_rejected(arguments):
     assert error.value.code == 2
 
 
-@pytest.mark.parametrize("command", ["historical", "train", "serve", "evaluate"])
+@pytest.mark.parametrize("command", ["train", "serve", "evaluate"])
 def test_future_commands_fail_explicitly(command):
     result = subprocess.run([sys.executable, "-m", "coveo_recsys", command], capture_output=True)
     assert result.returncode == 2
+
+
+def test_historical_build_has_explicit_inputs():
+    args = _parser().parse_args(
+        [
+            "historical",
+            "build",
+            "--config",
+            "configs/coveo_historical.json",
+            "--run-dir",
+            "runs/e2",
+            "--run-id",
+            "e2",
+        ]
+    )
+    assert args.action == "build"
+    assert str(args.config).replace("\\", "/") == "configs/coveo_historical.json"
 
 
 def test_environment_command(capsys):

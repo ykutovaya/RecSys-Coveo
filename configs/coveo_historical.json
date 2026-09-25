@@ -1,0 +1,31 @@
+{
+  "preparation": {
+    "path": "runs/coveo-ag10000-observed-v1",
+    "report_sha256": "cb00e7333bf1fe89b4a84d753ac4e2b172213e2170fe451993c16ab52ea3d4e4",
+    "report_descriptor_sha256": "6ab0af2178a28f348b7bf5837236f10dcd7ff3d7ecdbffc8bab63f132a01adc2",
+    "execution_path": "preparation/executions/69a53a35109b4ba8abda1b6941a9b08c.json",
+    "execution_descriptor_sha256": "be082ecd5f01eeb7d0a4389f2133a76c0b2295fe0f23708b5380eb28306844a4"
+  },
+  "metadata_path": "data/01_raw/sku_to_content.csv",
+  "config": {
+    "snapshot_time_ms": 1549238400000,
+    "graph_max_group_distance": 10,
+    "graph_window_ms": 1800000,
+    "graph_tau_ms": 600000.0,
+    "graph_min_support": 3,
+    "graph_max_neighbors": 100,
+    "graph_regularization": 10.0,
+    "popularity_smoothing": 1.0,
+    "vector_epsilon": 1e-12,
+    "buffer_records": 100000,
+    "merge_fan_in": 16,
+    "max_pairs": 100000000,
+    "max_group_size": 100000,
+    "max_temp_bytes": 2147483648,
+    "max_result_bytes": 1073741824,
+    "max_memory_bytes": 1610612736,
+    "max_seconds": 3600.0,
+    "schema_version": "historical_package_v1",
+    "id_order": "utf8"
+  }
+}
