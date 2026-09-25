@@ -192,6 +192,13 @@ def validate_final_evaluation(
     """Проверяет post_D, в том числе достаточность и согласованность статуса."""
     c = _Check()
     inf = c.obj(manifest.get("inference"), "inference")
+    c.binding(manifest.get("evaluation_protocol"), "observed_purchases_v1", "evaluation_protocol")
+    c.binding(
+        report.get("evaluation_protocol"),
+        manifest.get("evaluation_protocol"),
+        "evaluation_protocol",
+    )
+    c.binding(inf.get("precision_unit"), "fraction", "inference.precision_unit")
     verification = c.obj(manifest.get("verification"), "verification")
     evidence = c.obj(manifest.get("evidence"), "evidence")
     c.binding(
@@ -204,9 +211,19 @@ def validate_final_evaluation(
     info = c.obj(report.get("information"), "information")
     details = c.obj(report.get("interval_details"), "interval_details")
     statuses = c.obj(report.get("statuses"), "statuses")
-    maturity = c.obj(report.get("maturity"), "maturity")
+    observation = c.obj(report.get("observation"), "observation")
     sensitivity = c.obj(report.get("metadata_sensitivity"), "metadata_sensitivity")
-    mature = c.boolean(maturity.get("complete"), "maturity.complete")
+    published = c.boolean(
+        observation.get("published_rows_complete"), "observation.published_rows_complete"
+    )
+    calendar = c.boolean(
+        observation.get("calendar_admission_checked"), "observation.calendar_admission_checked"
+    )
+    c.binding(
+        observation.get("telemetry_completeness"), "unknown", "observation.telemetry_completeness"
+    )
+    if "maturity" in report or {"POR", "DeltaPOR"} & (metrics.keys() | intervals.keys()):
+        c.add("report", "old_protocol", "Отчёт содержит поля прежней постановки")
     evaluated = c.boolean(sensitivity.get("evaluated"), "metadata_sensitivity.evaluated")
     violations = c.field(report, "contract_violations", "contract_violations")
     if not isinstance(violations, list) or not all(
@@ -215,19 +232,25 @@ def validate_final_evaluation(
         c.add("contract_violations", "violations", "Нужен список описаний нарушений")
         violations = []
     n = c.count(metrics.get("N"), "metrics.N")
-    dataset = manifest.get("dataset", {})
-    sampling = dataset.get("session_sampling", {}) if isinstance(dataset, dict) else {}
+    n_obs = c.count(metrics.get("N_obs"), "metrics.N_obs")
+    if n is not None and n_obs is not None and n > n_obs:
+        c.add("metrics.N", "sample_count", "Целевых сессий больше выбранных наблюдаемых сессий")
+    dataset = c.obj(manifest.get("dataset"), "dataset")
+    c.binding(dataset.get("telemetry_completeness"), "unknown", "dataset.telemetry_completeness")
+    sampling = dataset.get("session_sampling", {})
     totals = sampling.get("session_count_by_period", {}) if isinstance(sampling, dict) else {}
     if isinstance(totals, dict) and "period_D" in totals:
         selected = c.count(
             totals["period_D"], "dataset.session_sampling.session_count_by_period.period_D"
         )
-        if n is not None and selected is not None and n > selected:
-            c.add("metrics.N", "sample_count", "Оценочных сессий больше выбранной подвыборки D")
+        if n_obs is not None and selected is not None and n_obs > selected:
+            c.add(
+                "metrics.N_obs", "sample_count", "Наблюдаемых сессий больше выбранной подвыборки D"
+            )
     if not _choice(inf.get("primary_estimate_type"), {"single_policy", "paired"}):
         c.add("inference.primary_estimate_type", "estimate_type", "Неизвестный вид основной оценки")
     single = inf.get("primary_estimate_type") == "single_policy"
-    key, categories = ("POR", {"0", "1"}) if single else ("DeltaPOR", {"-1", "0", "1"})
+    key, categories = ("Hit@20", {"0", "1"}) if single else ("DeltaHit@20", {"-1", "0", "1"})
     counts = c.obj(info.get("category_counts"), "information.category_counts")
     blocks = c.obj(info.get("category_blocks"), "information.category_blocks")
     if set(counts) != categories or set(blocks) != categories:
@@ -280,9 +303,9 @@ def validate_final_evaluation(
         if key not in metrics or estimate is not None:
             c.add(f"metrics.{key}", "unknown_estimate", "При N=0 оценка должна быть null")
     elif n is not None:
-        value = c.number(estimate, f"metrics.{key}", low=0 if single else -1000, high=1000)
+        value = c.number(estimate, f"metrics.{key}", low=0 if single else -1, high=1)
         if value is not None and set(known_counts) == categories:
-            expected = 1000 * (known_counts["1"] - (0 if single else known_counts["-1"])) / n
+            expected = (known_counts["1"] - (0 if single else known_counts["-1"])) / n
             if not math.isclose(value, expected, rel_tol=1e-8, abs_tol=1e-10):
                 c.add(f"metrics.{key}", "estimate_counts", "Оценка не совпала со счётчиками")
     if key not in intervals:
@@ -298,15 +321,10 @@ def validate_final_evaluation(
             "degenerate_interval",
             "Вырожденный бутстрэп-интервал непригоден",
         )
-    if (
-        valid
-        and lower is not None
-        and upper is not None
-        and (lower < (0 if single else -1000) or upper > 1000)
-    ):
+    if lower is not None and upper is not None and (lower < (0 if single else -1) or upper > 1):
         c.add("intervals", "interval_range", "Бутстрэп-границы вне области исхода")
-    threshold = inf.get("single_policy_half_width_per_1000" if single else "half_width_per_1000")
-    h = c.number(threshold, "inference.half_width", low=0)
+    threshold = inf.get("single_policy_half_width_fraction" if single else "half_width_fraction")
+    h = c.number(threshold, "inference.half_width", low=0, high=1)
     if h == 0:
         c.add("inference.half_width", "half_width", "Порог полуширины должен быть положительным")
     supported = sum(
@@ -326,11 +344,17 @@ def validate_final_evaluation(
         or upper is None
         or lower == upper
         or h is None
-        or (lower is not None and upper is not None and h is not None and (upper - lower) / 2 > h)
+        or (
+            lower is not None
+            and upper is not None
+            and h is not None
+            and (upper - lower) / 2 > h
+            and not math.isclose((upper - lower) / 2, h, rel_tol=1e-12, abs_tol=0)
+        )
     )
     expected_status = (
         "failed"
-        if violations or mature is False or evaluated is False
+        if violations or published is False or calendar is False or evaluated is False
         else ("insufficient" if insufficient else "passed")
     )
     if expected_status != "passed":

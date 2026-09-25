@@ -10,10 +10,15 @@ from coveo_recsys.contracts import CONTRACT_VERSION, InputValidationError
 class DatasetAccess:
     """База читает только A_G/B/C_smoke; закрытые исходы не открываются аргументом пути."""
 
-    def __init__(self, store: LocalArtifactStore, *, code_sha256: str, run_id: str) -> None:
+    def __init__(
+        self, store: LocalArtifactStore, *, code_sha256: str, run_id: str, scope: str = "synthetic"
+    ) -> None:
+        if scope not in {"synthetic", "actual"}:
+            raise InputValidationError("Неизвестная область доступа")
         self.store = store
         self.code_sha256 = code_sha256
         self.run_id = run_id
+        self.scope = scope
 
     def read(self, relative_path: str, *, purpose: str) -> bytes:
         path = PurePosixPath(relative_path)
@@ -36,6 +41,7 @@ class DatasetAccess:
             "allowed": False,
             "boundary": "local_routing_only",
             "reason": None,
+            "scope": self.scope,
         }
         try:
             if not allowed:
@@ -49,7 +55,8 @@ class DatasetAccess:
                 or descriptor.kind != "parquet"
                 or descriptor.schema_version != CONTRACT_VERSION
                 or descriptor.config_id != "e1_code"
-                or descriptor.scope != "synthetic"
+                or descriptor.scope != self.scope
+                or descriptor.configuration.get("diagnostic", False)
                 or descriptor.metadata.get("data_role")
                 != {"prefix": "prefix", "labels": "targets"}[purpose]
             ):
@@ -66,6 +73,6 @@ class DatasetAccess:
                 audit,
                 code_sha256=self.code_sha256,
                 run_id=self.run_id,
-                scope="synthetic",
+                scope=self.scope,
                 config_id="e1_code",
             )

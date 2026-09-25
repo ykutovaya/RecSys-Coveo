@@ -11,9 +11,7 @@ from coveo_recsys.contracts.common import ValidationIssue
 from .resources import resource_bytes
 
 
-def resolved_recipe_issues(
-    manifest: dict[str, Any], *, require_calibration: bool = False
-) -> tuple[ValidationIssue, ...]:
+def resolved_recipe_issues(manifest: dict[str, Any]) -> tuple[ValidationIssue, ...]:
     issues: list[ValidationIssue] = []
 
     def invalid(path: str, text: str) -> None:
@@ -133,38 +131,6 @@ def resolved_recipe_issues(
                     "ranker.resolved_parameters.training.num_boost_round",
                     "Нужен положительный бюджет обучения",
                 )
-    calibration = manifest["calibration"]["resolved_parameters"]
-    if calibration is None and not require_calibration:
-        pass
-    elif not isinstance(calibration, dict):
-        invalid("calibration.resolved_parameters", "Не заполнен рецепт калибратора")
-    else:
-        initial = calibration.get("initial")
-        valid_initial = (
-            isinstance(initial, dict)
-            and type(initial.get("a")) in {int, float}
-            and initial.get("a") == 0
-            and initial.get("b") == "b0_from_B"
-        )
-        fixed = {
-            "optimizer": "projected_newton",
-            "max_iterations": 200,
-            "backtracking_factor": 0.5,
-            "max_backtracking_steps": 60,
-            "armijo": 1e-4,
-            "projected_gradient_tolerance": 1e-8,
-            "dtype": "float64",
-        }
-        if not valid_initial or any(calibration.get(k) != v for k, v in fixed.items()):
-            invalid(
-                "calibration.resolved_parameters",
-                "Нужны конечные настройки проекционного Ньютона и начальная точка (0,b0)",
-            )
-        if (
-            type(calibration.get("max_iterations")) is not int
-            or type(calibration.get("max_backtracking_steps")) is not int
-        ):
-            invalid("calibration.resolved_parameters", "Число шагов должно быть целым")
     fields = {
         "neural": {
             "d": (True, False),
@@ -258,6 +224,9 @@ def resolved_recipe_issues(
                 )
     ann = manifest["ann_extension"]
     if ann["enabled"]:
+        drop = ann["maximum_hit_drop_fraction"]
+        if not number(drop, zero=True) or drop > 1:
+            invalid("ann_extension.maximum_hit_drop_fraction", "Нужен допуск в долях Hit@20")
         configuration = ann["resolved_configuration"]
         params = configuration.get("parameters") if isinstance(configuration, dict) else None
         if (

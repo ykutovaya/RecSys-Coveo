@@ -47,7 +47,7 @@ def _parser() -> argparse.ArgumentParser:
     validation.add_argument("--stage", choices=[s.value for s in Stage], required=True)
     validation.add_argument("--plan-reference", action="append", default=[], metavar="NAME=SHA256")
     validation.add_argument("--input-file", action="append", default=[], metavar="NAME=PATH")
-    validation.add_argument("--operation", choices=("calibrate", "evaluate"))
+    validation.add_argument("--operation", choices=("evaluate",))
     data = commands.add_parser("data", help="Подготовка искусственных данных Э1")
     data_actions = data.add_subparsers(dest="action", required=True)
     inspect = data_actions.add_parser("inspect")
@@ -74,7 +74,6 @@ def _parser() -> argparse.ArgumentParser:
         "train",
         "replay",
         "select",
-        "calibrate",
         "evaluate",
         "serve",
         "load",
@@ -91,7 +90,7 @@ def _plans(values: list[str]) -> dict[str, str]:
         name, separator, digest = value.partition("=")
         if (
             not separator
-            or name not in {"before_C_select", "before_E", "before_D", "before_AB"}
+            or name not in {"before_C_select", "before_D", "before_AB"}
             or name in result
             or len(digest) != 64
             or any(c not in "0123456789abcdef" for c in digest)
@@ -189,6 +188,10 @@ def main(argv: list[str] | None = None) -> int:
                     result = preparation.inspect(args.input_dir, args.profile, **options)
                 else:
                     result = preparation.prepare(args.input_dir, args.profile, args.plan, **options)
+            except KeyboardInterrupt:
+                preparation.progress("failed", reason="interrupted")
+                _emit({"status": "failed", "reason": "interrupted"})
+                return 130
             except (
                 ValueError,
                 OSError,
@@ -197,6 +200,10 @@ def main(argv: list[str] | None = None) -> int:
                 ArithmeticError,
                 RecursionError,
             ) as exc:
+                if preparation.common["scope"] == "actual":
+                    preparation.progress("failed", reason=type(exc).__name__)
+                    _emit({"status": "failed", "reason": type(exc).__name__})
+                    return 2
                 preparation.progress("failed", reason=type(exc).__name__, message=str(exc))
                 raise
             _emit(result)

@@ -1,0 +1,47 @@
+{
+  "contract_version": "2",
+  "type": "PreparationPlan",
+  "data": {
+    "scope": "actual",
+    "source_namespace": "coveo-sigir-1.0.0",
+    "task": {
+      "horizon_ms": 86400000,
+      "gap_ms": 1800000,
+      "max_requests": 10,
+      "detail_history_limit": 20,
+      "block_history_limit": 20,
+      "query_dimension": 50,
+      "event_semantics": "set_v1"
+    },
+    "periods": [
+      {"name": "A_G", "start_ms": 1548028800000, "end_ms": 1549238400000, "sample_size": 64},
+      {"name": "A_N", "start_ms": 1549238400000, "end_ms": 1550448000000, "sample_size": 0},
+      {"name": "B", "start_ms": 1550448000000, "end_ms": 1551657600000, "sample_size": 0},
+      {"name": "C_smoke", "start_ms": 1551657600000, "end_ms": 1552262400000, "sample_size": 0},
+      {"name": "C_select", "start_ms": 1552262400000, "end_ms": 1553472000000, "sample_size": 0},
+      {"name": "E", "start_ms": 1553472000000, "end_ms": 1554076800000, "sample_size": 0},
+      {"name": "D", "start_ms": 1554076800000, "end_ms": 1555286400000, "sample_size": 0}
+    ],
+    "coverage": {
+      "source_namespace": "coveo-sigir-1.0.0",
+      "start_ms": 1547528564513,
+      "end_ms": 1555300798561,
+      "gaps": [],
+      "evidence": "Unconfirmed: observed timestamp range only; gaps and session completion unknown. Publisher describes imperfect tracking and unspecified sampling. Checked 2026-09-25: https://github.com/coveooss/SIGIR-ecom-data-challenge ; https://arxiv.org/html/2104.09423v4#S3",
+      "confirmed_at_ms": null
+    },
+    "seed": 17,
+    "chunk_size": 512,
+    "chunk_bytes": 2097152,
+    "fan_in": 8,
+    "max_group_events": 10000,
+    "max_group_bytes": 4194304,
+    "max_session_blocks": 10000,
+    "max_session_bytes": 8388608,
+    "max_sessions": 64,
+    "diagnostic_sessions": 64,
+    "max_seconds": 1800,
+    "max_memory_bytes": 536870912,
+    "max_temp_bytes": 268435456
+  }
+}

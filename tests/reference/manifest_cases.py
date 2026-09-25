@@ -30,7 +30,7 @@ STAGES = (
 def make_manifest_case(
     store: LocalArtifactStore, stage: str, *, operation: str | None = None
 ) -> tuple[dict[str, Any], dict[str, str]]:
-    """Возвращает паспорт и закреплённые ссылки на четыре плана внутри test tmp_path."""
+    """Возвращает паспорт и закреплённые ссылки на планы внутри test tmp_path."""
     manifest = json.loads(
         resource_bytes("documents/math/coveo_session_recommender_run_manifest.template.json")
     )
@@ -157,31 +157,23 @@ def make_manifest_case(
             "resolved_parameters": manifest["ranker"]["resolved_parameters"],
         }
     )
-    manifest["calibration"]["resolved_parameters"] = {
-        "optimizer": "projected_newton",
-        "initial": {"a": 0, "b": "b0_from_B"},
-        "max_iterations": 200,
-        "backtracking_factor": 0.5,
-        "max_backtracking_steps": 60,
-        "armijo": 1e-4,
-        "projected_gradient_tolerance": 1e-8,
-        "dtype": "float64",
-    }
     manifest["inference"].update(
-        single_policy_half_width_per_1000=10,
+        single_policy_half_width_fraction=0.01,
         planned_outcome_variance=0.1,
         dependence_multiplier=1,
         pilot_provenance={"source": "synthetic"},
     )
-    manifest["inference"]["dependence_assumptions"]["single_policy_por"] = {
+    manifest["inference"]["dependence_assumptions"]["single_policy_hit"] = {
         "justification": "synthetic"
     }
     evidence(
         "data",
         schema_valid=True,
         whole_sessions=True,
-        mature_targets=True,
-        coverage_checked=True,
+        published_rows_complete=True,
+        calendar_admission_checked=True,
+        registered_targets_checked=True,
+        telemetry_completeness="unknown",
         overlapping_sessions=0,
         input_sha256=[x["sha256"] for x in dataset["files"]],
         input_size_bytes={
@@ -200,7 +192,7 @@ def make_manifest_case(
         expanded.extend(
             {
                 "B03": ["B03.data", "B03.service"],
-                "B10": ["B10.data", "B10.ranker", "B10.calibration", "B10.metadata"],
+                "B10": ["B10.data", "B10.ranker", "B10.metadata"],
                 "X02": ["X02.support", "X02.loss"],
             }.get(identifier, [identifier])
         )
@@ -225,7 +217,7 @@ def make_manifest_case(
             if identifier in early
             else ("post_load" if identifier in load_ids else "post_training")
         )
-        if identifier in {"B10.calibration", "B10.metadata", "B11", "B12"}:
+        if identifier in {"B10.metadata", "B12"}:
             due = "pre_D"
         if identifier == "B18":
             due = "pre_AB"
@@ -236,6 +228,8 @@ def make_manifest_case(
         return {
             key: deepcopy(manifest[key])
             for key in (
+                "evaluation_protocol",
+                "calibration",
                 "dataset",
                 "periods",
                 "task",
@@ -257,21 +251,13 @@ def make_manifest_case(
                 key: deepcopy(manifest["selection"][key])
                 for key in ("registered_configurations", "tie_break", "metadata_sensitivity")
             }
-        elif name == "before_E":
-            inputs.update(
-                calibration_recipe=deepcopy(manifest["calibration"]["resolved_parameters"]),
-                selected_policies_sha256=manifest["artifacts"]["selected_policies_sha256"],
-                selection_report_sha256=manifest["artifacts"]["selection_report_sha256"],
-                selection_plan_reference=plans["before_C_select"],
-            )
         elif name == "before_D":
             inputs.update(
                 inference=deepcopy(manifest["inference"]),
                 selection=deepcopy(manifest["selection"]),
-                calibration=deepcopy(manifest["calibration"]),
-                calibrator_sha256=manifest["artifacts"]["calibrator_sha256"],
                 selected_policies_sha256=manifest["artifacts"]["selected_policies_sha256"],
-                calibration_result_sha256=manifest["evidence"]["calibration"],
+                selection_report_sha256=manifest["artifacts"]["selection_report_sha256"],
+                selection_plan_reference=plans["before_C_select"],
             )
         elif name == "before_AB":
             online = deepcopy(manifest["online_experiment"])
@@ -310,14 +296,7 @@ def make_manifest_case(
         for definition in definitions:
             identifier = definition["test_id"]
             due = definition["required_by_stage"] == current
-            due |= current == "pre_D" and (
-                identifier.startswith("B10.") or identifier in {"B11", "B12"}
-            )
-            due |= (
-                current == stage
-                and operation == "calibrate"
-                and identifier in {"B10.calibration", "B11"}
-            )
+            due |= current == "pre_D" and (identifier.startswith("B10.") or identifier == "B12")
             due |= current == stage and operation == "evaluate" and identifier == "B12"
             if not due:
                 continue
@@ -396,7 +375,7 @@ def make_manifest_case(
                 control=config_id,
                 tie_break=manifest["selection"]["tie_break"],
             )
-        if index == 4 or (current == stage and operation == "calibrate"):
+        if index == 4:
             manifest["artifacts"]["selected_policies_sha256"] = publish(
                 envelope("selected_policies", policies=[config_id])
             )
@@ -408,7 +387,6 @@ def make_manifest_case(
                     selection_plan_sha256=manifest["evidence"]["selection_plan"],
                 )
             )
-            pin("before_E", "calibration_plan")
         if index == 4:
             manifest["inference"].update(
                 calendar_anchor_utc=manifest["periods"]["period_D"]["start_utc"],
@@ -416,13 +394,6 @@ def make_manifest_case(
                 planned_cells=12930,
                 block_cells=60,
                 sensitivity_block_cells=[30, 120],
-            )
-            manifest["verification"]["calibration_status"] = "insufficient"
-            evidence(
-                "calibration",
-                status="insufficient",
-                reason="synthetic class support missing",
-                calibration_plan_sha256=plans["before_E"],
             )
             pin(
                 "before_D",
@@ -434,12 +405,16 @@ def make_manifest_case(
             manifest["verification"]["offline_status"] = "passed"
             manifest["artifacts"]["final_evaluation_report_sha256"] = evidence(
                 "final_evaluation",
-                metrics={"N": 1000, "POR": 100},
-                intervals={"POR": [90, 110]},
-                maturity={"complete": True},
+                evaluation_protocol="observed_purchases_v1",
+                metrics={"N_obs": 1000, "N": 1000, "Hit@20": 0.1},
+                intervals={"Hit@20": [0.09, 0.11]},
+                observation={
+                    "published_rows_complete": True,
+                    "calendar_admission_checked": True,
+                    "telemetry_completeness": "unknown",
+                },
                 metadata_sensitivity={"evaluated": True},
-                statuses={"offline_status": "passed", "calibration_status": "insufficient"},
-                calibration_reason="synthetic class support missing",
+                statuses={"offline_status": "passed"},
                 evaluation_plan_sha256=manifest["evidence"]["evaluation_plan"],
                 interval_details={
                     "valid": True,
@@ -584,8 +559,6 @@ def make_manifest_case(
             if current in {"pre_AB", "post_AB"}
             else "before_D"
             if current in {"pre_D", "post_D"}
-            else "before_E"
-            if current == stage and operation == "calibrate"
             else "before_C_select"
             if current == "pre_selection"
             else None

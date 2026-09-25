@@ -8,9 +8,10 @@ from coveo_recsys.contracts import InputValidationError
 from coveo_recsys.data.access import DatasetAccess
 
 
-def test_access_checks_period_kind_path_and_records_attempts(tmp_path):
+@pytest.mark.parametrize("scope", ["synthetic", "actual"])
+def test_access_checks_period_kind_path_and_records_attempts(tmp_path, scope):
     store = LocalArtifactStore(tmp_path / "run")
-    access = DatasetAccess(store, code_sha256="a" * 64, run_id="synthetic")
+    access = DatasetAccess(store, code_sha256="a" * 64, run_id="synthetic", scope=scope)
     allowed = "datasets/B/prefixes/s.parquet"
     store.publish_table(
         allowed,
@@ -19,7 +20,7 @@ def test_access_checks_period_kind_path_and_records_attempts(tmp_path):
         code_sha256="a" * 64,
         run_id="synthetic",
         schema_version="2",
-        scope="synthetic",
+        scope=scope,
         config_id="e1_code",
         configuration={"period": "B", "dataset_kind": "prefixes"},
     )
@@ -43,6 +44,7 @@ def test_access_checks_period_kind_path_and_records_attempts(tmp_path):
     logs = [v for v in logs if "allowed" in v]
     assert sum(v["allowed"] for v in logs) == 1
     assert len(logs) == 7
+    assert all(v["scope"] == scope for v in logs)
 
 
 def test_failed_compatibility_is_not_logged_as_granted_access(tmp_path):

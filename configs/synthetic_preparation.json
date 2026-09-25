@@ -38,6 +38,10 @@
     "max_group_bytes": 16777216,
     "max_session_blocks": 100000,
     "max_session_bytes": 16777216,
-    "max_sessions": 100000
+    "max_sessions": 100000,
+    "diagnostic_sessions": 0,
+    "max_seconds": 1800,
+    "max_memory_bytes": 536870912,
+    "max_temp_bytes": 268435456
   }
 }

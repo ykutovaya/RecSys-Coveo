@@ -1,5 +1,7 @@
-"""Сборка сценария Э1 из принятых компонентов; только искусственные входы."""
+"""Подготовка Э1 и отдельная ограниченная проверка реальных сессий."""
 
+import bisect
+import hashlib
 import itertools
 import json
 import tempfile
@@ -26,9 +28,17 @@ from coveo_recsys.contracts.records import CanonicalBlock, Record
 from coveo_recsys.contracts.serialization import from_json, record_schema, to_json
 from coveo_recsys.contracts.training import SessionRecord, TargetRecord
 from coveo_recsys.data.canonical import canonicalize
-from coveo_recsys.data.io import FILES, inspect_inputs, iter_events, load_profile
-from coveo_recsys.data.periods import sample_sessions
+from coveo_recsys.data.io import (
+    FILES,
+    inspect_inputs,
+    iter_events,
+    load_profile,
+    row_batches,
+    timestamp,
+)
+from coveo_recsys.data.periods import sample_sessions, session_key
 from coveo_recsys.data.schedule import make_schedule
+from coveo_recsys.data.supply import SupplyLimits, inspect_supply
 from coveo_recsys.state import empty_prefix, reduce_state
 from coveo_recsys.targets import historical_cohort, prepare_targets
 from coveo_recsys.targets.cohort import CohortRecord
@@ -100,6 +110,65 @@ class Preparation:
         self.artifacts: dict[str, str] = {}
         self.inputs: dict[str, str] = {}
         self._verified_trees: dict[str, str] = {}
+        self.plan: PreparationPlan | None = None
+        self.reads: list[dict[str, Any]] = []
+        self.reused_stages: list[str] = []
+        self.temp_peak = 0
+        self.disk_peak = 0
+        self._last_budget_check = 0.0
+        self._last_scan_progress = 0.0
+
+    def _check_budget(self, *, force: bool = False) -> None:
+        if self.plan is None or not self.plan.diagnostic_sessions:
+            return
+        now = time.monotonic()
+        if not force and now - self._last_budget_check < 0.5:
+            return
+        self._last_budget_check = now
+        memory = _peak_memory()["peak_process_memory_bytes"]
+        files = [(p, p.stat().st_size) for p in self.store.root.rglob("*") if p.is_file()]
+        disk = sum(size for _, size in files)
+        temporary = sum(
+            size for p, size in files if any(part.startswith(".prepare-") for part in p.parts)
+        )
+        self.temp_peak = max(self.temp_peak, temporary)
+        self.disk_peak = max(self.disk_peak, disk)
+        if memory is None:
+            raise InputValidationError("Нельзя проверить бюджет памяти")
+        if (
+            now - self.started > self.plan.max_seconds
+            or memory > self.plan.max_memory_bytes
+            or temporary > self.plan.max_temp_bytes
+        ):
+            raise InputValidationError("Превышен бюджет времени, памяти или диска подготовки")
+
+    def _scan_progress(self, table: str, rows: int) -> None:
+        if self.reads and not self.reads[-1].get("complete", True):
+            self.reads[-1]["rows"] = rows
+        self._check_budget()
+        now = time.monotonic()
+        if now - self._last_scan_progress >= 10:
+            self.progress("reading", table=table, rows=rows)
+            self._last_scan_progress = now
+
+    def _input_hashes(self, input_dir: Path) -> dict[str, str]:
+        hashes = {}
+        for table, filename in FILES.items():
+            started = time.monotonic()
+            digest, size = hashlib.sha256(), 0
+            reading: dict[str, Any] = dict(
+                purpose="integrity", table=table, bytes=0, complete=False
+            )
+            self.reads.append(reading)
+            with (input_dir / filename).open("rb") as stream:
+                while block := stream.read(8_388_608):
+                    digest.update(block)
+                    size += len(block)
+                    reading["bytes"] = size
+                    self._check_budget()
+            hashes[table] = digest.hexdigest()
+            reading.update(complete=True, seconds=time.monotonic() - started)
+        return hashes
 
     @contextmanager
     def _operation(
@@ -116,6 +185,10 @@ class Preparation:
         self._verify_current(input_dir, profile_path, plan_path)
 
     def progress(self, step: str, **fields: Any) -> None:
+        if step.endswith("_reused"):
+            self.reused_stages.append(step)
+        if step != "failed":
+            self._check_budget(force=True)
         self.sequence += 1
         self.store.publish_json(
             f"preparation/progress/{self.execution_id}/{self.sequence:06}.json",
@@ -137,7 +210,9 @@ class Preparation:
     ) -> None:
         if (
             source_sha256(self.root) != self.code
-            or any(sha256_file(input_dir / FILES[key]) != self.inputs[key] for key in FILES)
+            or any(
+                digest != self.inputs[key] for key, digest in self._input_hashes(input_dir).items()
+            )
             or sha256_file(profile_path) != self.inputs["profile"]
             or (plan_path is not None and sha256_file(plan_path) != self.inputs["plan"])
         ):
@@ -155,10 +230,61 @@ class Preparation:
         self, input_dir: Path, profile_path: Path, *, batch_size: int, max_batch_chars: int
     ) -> dict[str, Any]:
         profile = load_profile(profile_path)
+        self.common["scope"] = profile.scope
         paths = {key: input_dir / filename for key, filename in FILES.items()}
-        catalog = inspect_inputs(
-            paths, profile, batch_size=batch_size, max_batch_chars=max_batch_chars
-        )
+        if profile.scope == "actual":
+            catalog_path = "inputs/catalog.json"
+            if (self.store.root / catalog_path).exists():
+                self.inputs = {**self._input_hashes(input_dir), "profile": profile.sha256}
+                descriptor = self.store.verify_compatible(
+                    catalog_path,
+                    expected_inputs=self.inputs,
+                    expected_code_sha256=self.code,
+                    expected_schema_version="1",
+                    expected_configuration={},
+                )
+                self._verify_tree(catalog_path, descriptor.descriptor_sha256)
+                catalog = strict_json_loads(self.store.read_bytes(catalog_path))
+                self.progress("inspection_reused")
+                return {"status": "inspected", "real_preflight": False, **catalog}
+            started = time.monotonic()
+            reading: dict[str, Any] = dict(
+                purpose="format_and_integrity", bytes=0, per_file_bytes={}, complete=False
+            )
+            self.reads.append(reading)
+
+            def supply_progress(name: str, rows: int, size: int) -> None:
+                reading["per_file_bytes"][name] = size
+                reading["bytes"] = sum(reading["per_file_bytes"].values())
+                self._scan_progress(name, rows)
+
+            raw = inspect_supply(
+                input_dir,
+                strict_json_loads(profile_path.read_bytes()),
+                limits=SupplyLimits(
+                    batch_size=batch_size,
+                    max_batch_chars=max_batch_chars,
+                    max_seconds=self.plan.max_seconds if self.plan else 1800,
+                ),
+                progress=supply_progress,
+            )
+            reading.update(complete=True, seconds=time.monotonic() - started)
+            catalog = {
+                "schema_version": "1",
+                "scope": "actual",
+                "profile_sha256": profile.sha256,
+                "files": {
+                    key: {**raw["files"][name], "name": name, "coverage_confirmed": False}
+                    for key, name in FILES.items()
+                },
+                "disk_plan": {"input_bytes": sum(p.stat().st_size for p in paths.values())},
+                "coverage_status": "unknown",
+                "real_preflight": False,
+            }
+        else:
+            catalog = inspect_inputs(
+                paths, profile, batch_size=batch_size, max_batch_chars=max_batch_chars
+            )
         self.inputs = {key: item["sha256"] for key, item in catalog["files"].items()}
         self.inputs["profile"] = profile.sha256
         content = profile_path.read_bytes()
@@ -210,7 +336,7 @@ class Preparation:
             descriptor.descriptor_sha256 != expected
             or descriptor.code_sha256 != self.code
             or descriptor.run_id != self.run_id
-            or descriptor.scope != "synthetic"
+            or descriptor.scope != self.common["scope"]
             or descriptor.config_id != "e1_code"
         ):
             raise InputValidationError("Несовместимая контрольная точка подготовки")
@@ -276,6 +402,7 @@ class Preparation:
         *,
         batch_size: int,
         max_batch_chars: int,
+        session_ids: frozenset[str] | None = None,
     ) -> list[dict[str, Any]]:
         path = "canonical/index.json"
         if (self.store.root / path).exists():
@@ -291,21 +418,38 @@ class Preparation:
             self.progress("canonical_reused", sessions=len(result))
             return result
         profile = load_profile(profile_path)
-        streams = [
-            iter_events(
+
+        def stream(table: str) -> Any:
+            started = time.monotonic()
+            reading: dict[str, Any] = dict(
+                purpose="selected_session_rows", table=table, bytes=None, complete=False
+            )
+            self.reads.append(reading)
+            yield from iter_events(
                 input_dir / FILES[table],
                 table,
                 profile,
                 batch_size=batch_size,
                 max_batch_chars=max_batch_chars,
                 file_sha256=self.inputs[table],
+                session_ids=session_ids,
+                progress=self._scan_progress,
             )
-            for table in ("browsing", "search")
-        ]
+            reading.update(
+                complete=True,
+                bytes=(input_dir / FILES[table]).stat().st_size,
+                seconds=time.monotonic() - started,
+            )
+
+        streams = [stream(table) for table in ("browsing", "search")]
         index: list[dict[str, Any]] = []
         dependencies = {
             key: self.artifacts[key] for key in ("inputs/catalog.json", "inputs/plan.json")
         }
+        if session_ids is not None:
+            dependencies["preparation/technical_selection.json"] = self.artifacts[
+                "preparation/technical_selection.json"
+            ]
         with tempfile.TemporaryDirectory(prefix=".prepare-", dir=self.store.root) as temporary:
             with closing(
                 canonicalize(
@@ -316,6 +460,7 @@ class Preparation:
                     fan_in=plan.fan_in,
                     max_group_events=plan.max_group_events,
                     max_group_bytes=plan.max_group_bytes,
+                    check_resources=lambda: self._check_budget(force=True),
                 )
             ) as blocks:
                 for (namespace, session_id), group in itertools.groupby(
@@ -357,7 +502,7 @@ class Preparation:
                         blocks=len(rows),
                         encoded_bytes=size,
                     )
-        if any(sha256_file(input_dir / FILES[key]) != self.inputs[key] for key in FILES):
+        if any(digest != self.inputs[key] for key, digest in self._input_hashes(input_dir).items()):
             raise InputValidationError("Вход изменился во время подготовки")
         self._remember(
             self.store.publish_json(
@@ -373,6 +518,86 @@ class Preparation:
             )
         )
         return index
+
+    def _technical_selection(
+        self,
+        input_dir: Path,
+        profile_path: Path,
+        plan: PreparationPlan,
+        *,
+        batch_size: int,
+        max_batch_chars: int,
+    ) -> tuple[str, ...]:
+        """Минимальные хеши наблюдаемых ID, не нормативная выборка допущенных A_G."""
+        path = "preparation/technical_selection.json"
+        if (self.store.root / path).exists():
+            descriptor = self.store.verify_compatible(
+                path,
+                expected_inputs=self.inputs,
+                expected_code_sha256=self.code,
+                expected_schema_version=CONTRACT_VERSION,
+                expected_configuration={},
+            )
+            self._verify_tree(path, descriptor.descriptor_sha256)
+            self.progress("technical_selection_reused")
+            return tuple(strict_json_loads(self.store.read_bytes(path))["session_ids"])
+        profile, period = load_profile(profile_path), plan.periods[0]
+        chosen: list[tuple[tuple[bytes, bytes], str]] = []
+        seen: set[str] = set()
+        for table in ("browsing", "search"):
+            started = time.monotonic()
+            reading: dict[str, Any] = dict(
+                purpose="technical_id_selection", table=table, bytes=None, complete=False
+            )
+            self.reads.append(reading)
+            rows = 0
+            for batch in row_batches(
+                input_dir / FILES[table],
+                table,
+                profile,
+                batch_size=batch_size,
+                max_batch_chars=max_batch_chars,
+                progress=self._scan_progress,
+            ):
+                for _, row in batch:
+                    rows += 1
+                    if not period.start_ms <= timestamp(row["timestamp"]) < period.end_ms:
+                        continue
+                    sid = row["session_id"]
+                    if sid in seen:
+                        continue
+                    key = session_key(sid, plan.seed)
+                    if len(chosen) == plan.diagnostic_sessions and key >= chosen[-1][0]:
+                        continue
+                    bisect.insort(chosen, (key, sid))
+                    seen.add(sid)
+                    if len(chosen) > plan.diagnostic_sessions:
+                        seen.remove(chosen.pop()[1])
+            reading.update(
+                complete=True,
+                rows=rows,
+                bytes=(input_dir / FILES[table]).stat().st_size,
+                seconds=time.monotonic() - started,
+            )
+        result = tuple(sid for _, sid in chosen)
+        self._remember(
+            self.store.publish_json(
+                path,
+                {
+                    "session_ids": result,
+                    "rule": "lowest_seeded_hash_of_ids_with_any_row_in_A_G",
+                    "normative_sample": False,
+                },
+                inputs=self.inputs,
+                schema_version=CONTRACT_VERSION,
+                artifact_dependencies={
+                    key: self.artifacts[key] for key in ("inputs/catalog.json", "inputs/plan.json")
+                },
+                **self.common,
+            )
+        )
+        self.progress("technical_selection_complete", sessions=len(result))
+        return result
 
     @staticmethod
     def _requests(
@@ -395,14 +620,59 @@ class Preparation:
         batch_size: int,
         max_batch_chars: int,
     ) -> dict[str, Any]:
-        with self._operation(input_dir, profile_path, plan_path):
-            return self._prepare(
-                input_dir,
-                profile_path,
-                plan_path,
-                batch_size=batch_size,
-                max_batch_chars=max_batch_chars,
-            )
+        try:
+            with self._operation(input_dir, profile_path, plan_path):
+                report = self._prepare(
+                    input_dir,
+                    profile_path,
+                    plan_path,
+                    batch_size=batch_size,
+                    max_batch_chars=max_batch_chars,
+                )
+            self._check_budget(force=True)
+        except (Exception, KeyboardInterrupt) as exc:
+            if self.plan is not None and self.plan.diagnostic_sessions:
+                self._execution("interrupted" if isinstance(exc, KeyboardInterrupt) else "failed")
+            raise
+        if self.plan is not None and self.plan.diagnostic_sessions:
+            report = {**report, "status": "prepared_diagnostic", **self._execution("completed")}
+        return report
+
+    def _execution(self, status: str) -> dict[str, Any]:
+        """Успех отмечается только после заключительной проверки входов и бюджета."""
+        measurements = {
+            "status": status,
+            "elapsed_seconds": time.monotonic() - self.started,
+            **_peak_memory(),
+            "reads": self.reads,
+            "logical_read_bytes": sum(item["bytes"] or 0 for item in self.reads),
+            "read_bytes_complete": all(item["bytes"] is not None for item in self.reads),
+            "reused_stages": self.reused_stages,
+            "temporary_peak_bytes": self.temp_peak,
+            "run_disk_peak_bytes": self.disk_peak,
+            "result_bytes_before_measurement": sum(
+                p.stat().st_size for p in self.store.root.rglob("*") if p.is_file()
+            ),
+            "disk_measurement": "at CSV batches, sorting writes/merges and stages; result includes copies/logs",
+        }
+        path = f"preparation/executions/{self.execution_id}.json"
+        dependencies = (
+            {
+                "reports/preparation.json": self.store.describe(
+                    "reports/preparation.json"
+                ).descriptor_sha256
+            }
+            if status == "completed"
+            else {}
+        )
+        self.store.publish_json(
+            path,
+            measurements,
+            inputs=self.inputs,
+            artifact_dependencies=dependencies,
+            **self.common,
+        )
+        return {"execution_path": path, "execution": measurements}
 
     def _prepare(
         self,
@@ -415,12 +685,18 @@ class Preparation:
     ) -> dict[str, Any]:
         content = plan_path.read_bytes()
         plan = from_json(content, PreparationPlan)
+        self.plan = plan
+        self.common["scope"] = plan.scope
+        self._check_budget(force=True)
         profile = load_profile(profile_path)
         if (
             plan.source_namespace != profile.namespace
             or plan.task.query_dimension != profile.dimensions["query"]
+            or plan.scope != profile.scope
         ):
             raise InputValidationError("План и профиль несовместимы")
+        if plan.scope == "actual" and plan.coverage.confirmed_at_ms is not None:
+            raise InputValidationError("Профиль поставки не подтверждает покрытие реальных событий")
         self._inspect(
             input_dir, profile_path, batch_size=batch_size, max_batch_chars=max_batch_chars
         )
@@ -450,8 +726,24 @@ class Preparation:
             self._verify_current(input_dir, profile_path, plan_path)
             return {**report, "report_path": report_path, "report_sha256": descriptor.sha256}
 
+        technical_selection = (
+            self._technical_selection(
+                input_dir,
+                profile_path,
+                plan,
+                batch_size=batch_size,
+                max_batch_chars=max_batch_chars,
+            )
+            if plan.diagnostic_sessions
+            else None
+        )
         index = self._canonical(
-            input_dir, profile_path, plan, batch_size=batch_size, max_batch_chars=max_batch_chars
+            input_dir,
+            profile_path,
+            plan,
+            batch_size=batch_size,
+            max_batch_chars=max_batch_chars,
+            session_ids=frozenset(technical_selection) if technical_selection is not None else None,
         )
         sessions: list[SessionRecord] = []
         for item in index:
@@ -473,7 +765,9 @@ class Preparation:
                 (
                     s.session_id
                     for s in sessions
-                    if s.period == p.name and s.exclusion_reason is None
+                    if s.period == p.name
+                    and s.exclusion_reason is None
+                    and not plan.diagnostic_sessions
                 ),
                 p.sample_size,
                 seed=plan.seed,
@@ -495,13 +789,14 @@ class Preparation:
         )
         selected = {sid for values in selection.values() for sid in values}
         datasets: list[dict[str, Any]] = []
+        diagnostic_datasets: list[dict[str, Any]] = []
         for item, session in zip(index, sessions, strict=True):
-            if session.session_id not in selected:
+            if session.session_id not in selected and not plan.diagnostic_sessions:
                 continue
             blocks = self._records(item["path"], CanonicalBlock)
             requests = self._requests(blocks, plan)
             _, targets = prepare_targets(blocks, requests, plan.coverage, plan.periods, plan.task)
-            base = f"datasets/{session.period}"
+            base = "diagnostic/A_G" if plan.diagnostic_sessions else f"datasets/{session.period}"
             prefix_path, target_path = (
                 f"{base}/{kind}/{item['key']}.parquet" for kind in ("prefixes", "targets")
             )
@@ -515,7 +810,11 @@ class Preparation:
                 PreparedRequest,
                 role="prefix",
                 dependencies=dependencies,
-                configuration={"period": session.period, "dataset_kind": "prefixes"},
+                configuration={
+                    "period": session.period,
+                    "dataset_kind": "prefixes",
+                    "diagnostic": bool(plan.diagnostic_sessions),
+                },
             )
             self._table(
                 target_path,
@@ -523,10 +822,14 @@ class Preparation:
                 TargetRecord,
                 role="targets",
                 dependencies={**dependencies, prefix_path: self.artifacts[prefix_path]},
-                configuration={"period": session.period, "dataset_kind": "targets"},
+                configuration={
+                    "period": session.period,
+                    "dataset_kind": "targets",
+                    "diagnostic": bool(plan.diagnostic_sessions),
+                },
             )
             cohort_path = None
-            if session.period == "A_G":
+            if session.period == "A_G" and not plan.diagnostic_sessions:
                 cohort_path = f"cohort/A_G/{item['key']}.parquet"
                 self._table(
                     cohort_path,
@@ -535,7 +838,8 @@ class Preparation:
                     dependencies=dependencies,
                     configuration={"period": "A_G"},
                 )
-            datasets.append(
+            destination = diagnostic_datasets if plan.diagnostic_sessions else datasets
+            destination.append(
                 dict(
                     period=session.period,
                     session_id=session.session_id,
@@ -546,7 +850,7 @@ class Preparation:
                     requests=len(requests),
                 )
             )
-            self.progress("prepared_session", sessions=len(datasets), requests=len(requests))
+            self.progress("prepared_session", sessions=len(destination), requests=len(requests))
         counts = {}
         for period in PERIOD_NAMES:
             eligible = sum(s.period == period for s in sessions)
@@ -560,9 +864,9 @@ class Preparation:
             )
         self._verify_current(input_dir, profile_path, plan_path)
         report = dict(
-            status="prepared",
-            scope="synthetic",
-            evidence_scope="synthetic_code",
+            status="diagnostic_materialized" if plan.diagnostic_sessions else "prepared",
+            scope=plan.scope,
+            evidence_scope="actual_diagnostic" if plan.scope == "actual" else "synthetic_code",
             run_id=self.run_id,
             real_preflight=False,
             contract_version=CONTRACT_VERSION,
@@ -570,17 +874,19 @@ class Preparation:
             inputs=self.inputs,
             canonical_sessions=len(index),
             canonical_blocks=sum(item["blocks"] for item in index),
-            request_count=sum(item["requests"] for item in datasets),
+            request_count=sum(item["requests"] for item in datasets + diagnostic_datasets),
             selection=selection,
             exclusions=dict(Counter(s.exclusion_reason for s in sessions if s.exclusion_reason)),
             period_counts=counts,
             datasets=datasets,
+            diagnostic_datasets=diagnostic_datasets,
+            technical_selection=technical_selection,
             artifacts=dict(self.artifacts),
             limitations=[
-                "Фактическая схема Coveo не подтверждена",
+                "Техническая выборка не заменяет нормативный отбор и подтверждение покрытия",
                 "Каталог I_G и кандидаты ещё не построены",
                 "Локальное разделение наборов не заменяет рабочие права Э6",
-                "Время и память на объёме Coveo ещё не измерены",
+                "Малый прогон не подтверждает масштабируемость полной подготовки",
             ],
         )
         descriptor = self.store.publish_json(

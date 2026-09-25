@@ -2,7 +2,7 @@
   "type": "object",
   "properties": {
     "manifest_version": {
-      "const": "2.8"
+      "const": "2.10"
     },
     "status": {
       "enum": [
@@ -30,9 +30,6 @@
             "before_C_select": {
               "$ref": "#/$defs/nullableSha256"
             },
-            "before_E": {
-              "$ref": "#/$defs/nullableSha256"
-            },
             "before_D": {
               "$ref": "#/$defs/nullableSha256"
             },
@@ -42,7 +39,6 @@
           },
           "required": [
             "before_C_select",
-            "before_E",
             "before_D",
             "before_AB"
           ],
@@ -312,6 +308,9 @@
             "ignored_fields"
           ],
           "additionalProperties": false
+        },
+        "telemetry_completeness": {
+          "const": "unknown"
         }
       },
       "required": [
@@ -329,7 +328,8 @@
         "availability_mode",
         "session_sampling",
         "search_payload_policy",
-        "search_canonicalization"
+        "search_canonicalization",
+        "telemetry_completeness"
       ],
       "additionalProperties": false
     },
@@ -654,12 +654,10 @@
       "type": "object",
       "properties": {
         "estimand": {
-          "type": "string",
-          "minLength": 1
+          "const": "first_request_hit_at_20_among_recorded_purchase_sessions"
         },
         "eligibility_rule": {
-          "type": "string",
-          "minLength": 1
+          "const": "first_valid_detail_block_without_observed_purchase"
         },
         "horizon_seconds": {
           "type": "integer",
@@ -670,8 +668,7 @@
           "minimum": 0
         },
         "max_requests_per_session": {
-          "type": "integer",
-          "minimum": 0
+          "const": 1
         },
         "stop_requests_at_first_purchase": {
           "type": "boolean"
@@ -691,6 +688,20 @@
         "candidate_accounting": {
           "type": "string",
           "minLength": 1
+        },
+        "target_rule": {
+          "const": "distinct_registered_purchase_skus_in_same_session_after_first_request_until_min_horizon_last_recorded_event"
+        },
+        "evaluation_cohort": {
+          "const": "sessions_with_nonempty_registered_target"
+        },
+        "empty_target_outcome": {
+          "const": "unknown"
+        },
+        "reserved_periods": {
+          "const": [
+            "E"
+          ]
         }
       },
       "required": [
@@ -703,7 +714,11 @@
         "slate_size",
         "candidate_limit",
         "catalog_rule",
-        "candidate_accounting"
+        "candidate_accounting",
+        "target_rule",
+        "evaluation_cohort",
+        "empty_target_outcome",
+        "reserved_periods"
       ],
       "additionalProperties": false
     },
@@ -755,10 +770,6 @@
           "minimum": 0
         },
         "popularity_smoothing": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "purchase_frequency_smoothing": {
           "type": "integer",
           "minimum": 0
         },
@@ -833,52 +844,21 @@
           "minLength": 1
         },
         "diversity_penalty": {
-          "type": "integer",
-          "minimum": 0
+          "const": 0
         },
         "historical_purchase_feature": {
           "type": "object",
           "properties": {
-            "anchor": {
-              "type": "string",
-              "minLength": 1
+            "enabled": {
+              "const": false
             },
-            "horizon_from": {
-              "type": "string",
-              "minLength": 1
-            },
-            "target_interval": {
-              "type": "string",
-              "minLength": 1
-            },
-            "same_session_only": {
-              "type": "boolean"
-            },
-            "repeat_views_reset_anchor": {
-              "type": "boolean"
-            },
-            "maturity": {
-              "type": "string",
-              "minLength": 1
-            },
-            "empty_global_cohort": {
-              "type": "string",
-              "minLength": 1
-            },
-            "zero_item_support": {
-              "type": "string",
-              "minLength": 1
+            "reason": {
+              "const": "telemetry_completeness_unknown"
             }
           },
           "required": [
-            "anchor",
-            "horizon_from",
-            "target_interval",
-            "same_session_only",
-            "repeat_views_reset_anchor",
-            "maturity",
-            "empty_global_cohort",
-            "zero_item_support"
+            "enabled",
+            "reason"
           ],
           "additionalProperties": false
         }
@@ -896,7 +876,6 @@
         "history_decay_seconds",
         "search_expiry_seconds",
         "popularity_smoothing",
-        "purchase_frequency_smoothing",
         "vector_epsilon",
         "score_epsilon",
         "search_mode",
@@ -1042,139 +1021,16 @@
     "calibration": {
       "type": "object",
       "properties": {
-        "reference_period": {
-          "type": "string",
-          "minLength": 1
+        "enabled": {
+          "const": false
         },
-        "fit_period": {
-          "type": "string",
-          "minLength": 1
-        },
-        "evaluation_period": {
-          "type": "string",
-          "minLength": 1
-        },
-        "eligible_branch": {
-          "type": "string",
-          "minLength": 1
-        },
-        "lambda_a": {
-          "type": "number",
-          "minimum": 0
-        },
-        "lambda_b": {
-          "type": "number",
-          "minimum": 0
-        },
-        "probability_epsilon": {
-          "type": "number",
-          "minimum": 0
-        },
-        "contract": {
-          "type": "string",
-          "minLength": 1
-        },
-        "resolved_parameters": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "$ref": "#/$defs/nonemptyObject"
-            }
-          ]
-        },
-        "changes_main_ranking": {
-          "type": "boolean"
-        },
-        "dependence_process_contract": {
-          "type": "string",
-          "minLength": 1
-        },
-        "dependence_assumptions": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "$ref": "#/$defs/nonemptyObject"
-            }
-          ]
-        },
-        "block_plan": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "$ref": "#/$defs/nonemptyObject"
-            }
-          ]
-        },
-        "global": {
-          "type": "object",
-          "properties": {
-            "minimum_class_blocks": {
-              "type": "integer",
-              "minimum": 0
-            }
-          },
-          "required": [
-            "minimum_class_blocks"
-          ],
-          "additionalProperties": false
-        },
-        "reliability": {
-          "type": "object",
-          "properties": {
-            "local_minimum_class_sessions": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "local_minimum_class_blocks": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "local_minimum_session_ess": {
-              "type": "integer",
-              "minimum": 0
-            }
-          },
-          "required": [
-            "local_minimum_class_sessions",
-            "local_minimum_class_blocks",
-            "local_minimum_session_ess"
-          ],
-          "additionalProperties": false
-        },
-        "ece_regularity_justification": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "$ref": "#/$defs/nonemptyObject"
-            }
-          ]
+        "reason": {
+          "const": "not_used_in_observed_purchases_v1"
         }
       },
       "required": [
-        "reference_period",
-        "fit_period",
-        "evaluation_period",
-        "eligible_branch",
-        "lambda_a",
-        "lambda_b",
-        "probability_epsilon",
-        "contract",
-        "resolved_parameters",
-        "changes_main_ranking",
-        "dependence_process_contract",
-        "dependence_assumptions",
-        "block_plan",
-        "global",
-        "reliability",
-        "ece_regularity_justification"
+        "enabled",
+        "reason"
       ],
       "additionalProperties": false
     },
@@ -1366,28 +1222,6 @@
             }
           ]
         },
-        "half_width_per_1000": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "number",
-              "exclusiveMinimum": 0
-            }
-          ]
-        },
-        "single_policy_half_width_per_1000": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "number",
-              "exclusiveMinimum": 0
-            }
-          ]
-        },
         "dependence_multiplier": {
           "anyOf": [
             {
@@ -1412,7 +1246,7 @@
         "dependence_assumptions": {
           "type": "object",
           "properties": {
-            "paired_por": {
+            "paired_hit": {
               "anyOf": [
                 {
                   "type": "null"
@@ -1422,7 +1256,7 @@
                 }
               ]
             },
-            "single_policy_por": {
+            "single_policy_hit": {
               "anyOf": [
                 {
                   "type": "null"
@@ -1434,8 +1268,8 @@
             }
           },
           "required": [
-            "paired_por",
-            "single_policy_por"
+            "paired_hit",
+            "single_policy_hit"
           ],
           "additionalProperties": false
         },
@@ -1483,6 +1317,33 @@
               "exclusiveMinimum": 0
             }
           ]
+        },
+        "half_width_fraction": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            }
+          ]
+        },
+        "single_policy_half_width_fraction": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            }
+          ]
+        },
+        "precision_unit": {
+          "const": "fraction"
         }
       },
       "required": [
@@ -1499,8 +1360,8 @@
         "minimum_effective_blocks",
         "minimum_nonempty_disjoint_blocks",
         "planned_cells",
-        "half_width_per_1000",
-        "single_policy_half_width_per_1000",
+        "half_width_fraction",
+        "single_policy_half_width_fraction",
         "dependence_multiplier",
         "pilot_provenance",
         "dependence_assumptions",
@@ -1512,7 +1373,8 @@
         "structural_identity_policy",
         "primary_estimate_type",
         "primary_policy_config_id",
-        "planned_outcome_variance"
+        "planned_outcome_variance",
+        "precision_unit"
       ],
       "additionalProperties": false
     },
@@ -2632,6 +2494,18 @@
         "maximum_empty_approximate_with_nonempty_exact": {
           "type": "integer",
           "minimum": 0
+        },
+        "maximum_hit_drop_fraction": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          ]
         }
       },
       "required": [
@@ -2640,7 +2514,8 @@
         "score_contract",
         "regret_score",
         "regret_score_formula_references",
-        "maximum_empty_approximate_with_nonempty_exact"
+        "maximum_empty_approximate_with_nonempty_exact",
+        "maximum_hit_drop_fraction"
       ],
       "additionalProperties": false
     },
@@ -2850,12 +2725,7 @@
           ]
         },
         "calibration_status": {
-          "enum": [
-            "not_run",
-            "passed",
-            "failed",
-            "insufficient"
-          ]
+          "const": "not_used"
         },
         "offline_status": {
           "enum": [
@@ -2995,9 +2865,6 @@
         "trained_models_sha256": {
           "$ref": "#/$defs/nullableSha256"
         },
-        "calibrator_sha256": {
-          "$ref": "#/$defs/nullableSha256"
-        },
         "selected_policies_sha256": {
           "$ref": "#/$defs/nullableSha256"
         },
@@ -3010,7 +2877,6 @@
       },
       "required": [
         "trained_models_sha256",
-        "calibrator_sha256",
         "selected_policies_sha256",
         "selection_report_sha256",
         "final_evaluation_report_sha256"
@@ -3110,9 +2976,6 @@
         "load": {
           "$ref": "#/$defs/nullableSha256"
         },
-        "calibration_plan": {
-          "$ref": "#/$defs/nullableSha256"
-        },
         "selection_plan": {
           "$ref": "#/$defs/nullableSha256"
         },
@@ -3120,9 +2983,6 @@
           "$ref": "#/$defs/nullableSha256"
         },
         "evaluation_plan": {
-          "$ref": "#/$defs/nullableSha256"
-        },
-        "calibration": {
           "$ref": "#/$defs/nullableSha256"
         },
         "final_evaluation": {
@@ -3139,10 +2999,14 @@
         }
       },
       "additionalProperties": false
+    },
+    "evaluation_protocol": {
+      "const": "observed_purchases_v1"
     }
   },
   "required": [
     "manifest_version",
+    "evaluation_protocol",
     "status",
     "scope",
     "freeze",
@@ -3172,7 +3036,7 @@
   ],
   "additionalProperties": false,
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:coveo:manifest:2.8",
+  "$id": "urn:coveo:manifest:2.10",
   "$defs": {
     "jsonValue": {
       "anyOf": [
@@ -3333,7 +3197,6 @@
         "operation": {
           "enum": [
             null,
-            "calibrate",
             "evaluate"
           ]
         },

@@ -70,7 +70,7 @@ def _checks() -> list[dict[str, Any]]:
         due = "preflight" if identifier in early else "post_training"
         if identifier in {"B14", "B15", "B16", "B17", "EXPL01"}:
             due = "post_load"
-        if identifier in {"B11", "B12"}:
+        if identifier == "B12":
             due = "pre_D"
         if identifier == "B18":
             due = "pre_AB"
@@ -91,13 +91,12 @@ def _checks() -> list[dict[str, Any]]:
             "B10": {
                 "B10.data": "preflight",
                 "B10.ranker": "post_training",
-                "B10.calibration": "pre_D",
                 "B10.metadata": "pre_D",
             },
             "X02": {"X02.support": "preflight", "X02.loss": "post_training"},
         }
         for key, deadline in split.get(identifier, {identifier: due}).items():
-            repeat = ["pre_D"] if key.startswith("B10.") or key in {"B11", "B12"} else []
+            repeat = ["pre_D"] if key.startswith("B10.") or key == "B12" else []
             definitions.append(
                 dict(
                     test_id=key,
@@ -118,7 +117,7 @@ def required_checks(
 ) -> list[dict[str, Any]]:
     """Применимые требования для обычных тестов и сохранённых отчётов."""
     stage_name = Stage(stage).value
-    if operation not in {None, "calibrate", "evaluate"}:
+    if operation not in {None, "evaluate"}:
         raise ValueError("Неизвестная операция")
     index = STAGES.index(stage_name)
     result = []
@@ -126,11 +125,7 @@ def required_checks(
         deadline = definition["required_by_stage"]
         if deadline == "post_load" and stage_name not in SERVICE_STAGES:
             continue
-        operation_ids = (
-            {"B10.calibration", "B11"}
-            if operation == "calibrate"
-            else ({"B12"} if operation == "evaluate" else set())
-        )
+        operation_ids = {"B12"} if operation == "evaluate" else set()
         if definition["test_id"] in operation_ids and index < STAGES.index(deadline):
             definition = dict(definition, required_by_stage=stage_name)
         if STAGES.index(definition["required_by_stage"]) <= index:
@@ -143,6 +138,8 @@ def verification_configuration(manifest: Mapping[str, Any]) -> dict[str, Any]:
     return {
         key: deepcopy(manifest[key])
         for key in (
+            "evaluation_protocol",
+            "calibration",
             "dataset",
             "periods",
             "task",
@@ -159,28 +156,20 @@ def verification_configuration(manifest: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def plan_inputs(manifest: Mapping[str, Any], name: str) -> dict[str, Any]:
-    """Четыре конкретных плана связываются с используемыми входами."""
+    """Конкретные планы связываются с используемыми входами."""
     inputs = verification_configuration(manifest)
     if name == "before_C_select":
         inputs["selection"] = {
             key: deepcopy(manifest["selection"][key])
             for key in ("registered_configurations", "tie_break", "metadata_sensitivity")
         }
-    elif name == "before_E":
-        inputs.update(
-            calibration_recipe=deepcopy(manifest["calibration"]["resolved_parameters"]),
-            selected_policies_sha256=manifest["artifacts"]["selected_policies_sha256"],
-            selection_report_sha256=manifest["artifacts"]["selection_report_sha256"],
-            selection_plan_reference=manifest["freeze"]["plan_references"]["before_C_select"],
-        )
     elif name == "before_D":
         inputs.update(
             inference=deepcopy(manifest["inference"]),
             selection=deepcopy(manifest["selection"]),
-            calibration=deepcopy(manifest["calibration"]),
-            calibrator_sha256=manifest["artifacts"]["calibrator_sha256"],
             selected_policies_sha256=manifest["artifacts"]["selected_policies_sha256"],
-            calibration_result_sha256=manifest["evidence"].get("calibration"),
+            selection_report_sha256=manifest["artifacts"]["selection_report_sha256"],
+            selection_plan_reference=manifest["freeze"]["plan_references"]["before_C_select"],
         )
     elif name == "before_AB":
         online = deepcopy(manifest["online_experiment"])
@@ -269,9 +258,7 @@ class _Validation:
         return result
 
     def policy(self) -> None:
-        if (self.operation == "calibrate" and self.index < 3) or (
-            self.operation == "evaluate" and self.index < 1
-        ):
+        if self.operation == "evaluate" and self.index < 1:
             self.issue(
                 "operation",
                 "operation_stage",
@@ -292,12 +279,7 @@ class _Validation:
             if self.m[group] != self.template[group]:
                 self.issue(group, "task_changed", "Изменена нормативная постановка первого профиля")
         mutable = {
-            "calibration": {
-                "resolved_parameters",
-                "dependence_assumptions",
-                "block_plan",
-                "ece_regularity_justification",
-            },
+            "calibration": set(),
             "inference": {key for key, value in self.template["inference"].items() if value is None}
             | {"primary_estimate_type", "primary_policy_config_id", "dependence_assumptions"},
             "selection": {"registered_configurations", "primary_comparison"},
@@ -333,6 +315,8 @@ class _Validation:
                         "Изменён нормативный метод/период/порог",
                     )
         for path in (
+            "evaluation_protocol",
+            "dataset.telemetry_completeness",
             "dataset.timezone",
             "dataset.timestamp_unit",
             "dataset.search_payload_policy",
@@ -350,6 +334,7 @@ class _Validation:
                     "enabled",
                     "resolved_configuration",
                     "regret_score_formula_references",
+                    "maximum_hit_drop_fraction",
                 }:
                     if self.m[f"{module}_extension"][key] != expected:
                         self.issue(
@@ -417,11 +402,7 @@ class _Validation:
                 "unknown_authentication",
                 "Неизвестный режим проверки пакетов",
             )
-        self.issues.extend(
-            resolved_recipe_issues(
-                self.m, require_calibration=self.operation == "calibrate" or self.index >= 4
-            )
-        )
+        self.issues.extend(resolved_recipe_issues(self.m))
 
     def preflight(self) -> None:
         for path in (
@@ -584,7 +565,13 @@ class _Validation:
                 )
         data_report = self.evidence("data")
         if data_report:
-            for key in ("schema_valid", "whole_sessions", "mature_targets", "coverage_checked"):
+            for key in (
+                "schema_valid",
+                "whole_sessions",
+                "published_rows_complete",
+                "calendar_admission_checked",
+                "registered_targets_checked",
+            ):
                 if data_report.get(key) is not True:
                     self.issue(
                         f"evidence.data.{key}",
@@ -601,6 +588,12 @@ class _Validation:
                     "session_overlap",
                     "Сессии пересекаются",
                     "gate",
+                )
+            if data_report.get("telemetry_completeness") != "unknown":
+                self.issue(
+                    "evidence.data.telemetry_completeness",
+                    "telemetry_completeness",
+                    "Полнота телеметрии должна оставаться неизвестной",
                 )
             expected = [x["sha256"] for x in files]
             if data_report.get("input_sha256") != expected:
@@ -683,8 +676,6 @@ class _Validation:
                 if stage in {"pre_AB", "post_AB"}
                 else "before_D"
                 if stage in {"pre_D", "post_D"}
-                else "before_E"
-                if report.get("operation") == "calibrate"
                 else "before_C_select"
                 if stage == "pre_selection"
                 else None
@@ -789,8 +780,6 @@ class _Validation:
         names = []
         if self.index >= 3:
             names.append(("before_C_select", "selection_plan"))
-        if self.operation == "calibrate" or self.index >= 4:
-            names.append(("before_E", "calibration_plan"))
         if self.index >= 4:
             names.append(("before_D", "evaluation_plan"))
         if self.index >= 6:
@@ -813,49 +802,10 @@ class _Validation:
             if report and report.get("inputs") != plan_inputs(self.m, name):
                 code = {
                     "before_C_select": "selection_plan_changed",
-                    "before_E": "calibration_recipe_changed",
                     "before_D": "evaluation_plan_changed",
                     "before_AB": "online_plan_changed",
                 }[name]
                 self.issue(name, code, "Код, данные или настройки изменились после фиксации плана")
-            if name == "before_E":
-                selected = self.read_hash(
-                    self.need("artifacts.selected_policies_sha256"),
-                    "selected_policies",
-                    envelope=True,
-                )
-                selection = self.read_hash(
-                    self.need("artifacts.selection_report_sha256"),
-                    "selection_report",
-                    envelope=True,
-                )
-                registered = {
-                    entry["config_id"]
-                    for entry in self.m["selection"]["registered_configurations"] or []
-                }
-                policies = selected.get("policies") if selected else None
-                if (
-                    not isinstance(policies, list)
-                    or not policies
-                    or any(
-                        not isinstance(policy, str) or policy not in registered
-                        for policy in policies
-                    )
-                ):
-                    self.issue(
-                        name, "selected_binding", "До E нужна выбранная зарегистрированная модель"
-                    )
-                if selection and (
-                    selection.get("status") != "passed"
-                    or selection.get("policies") != policies
-                    or selection.get("selection_plan_sha256")
-                    != self.plan_references.get("before_C_select")
-                ):
-                    self.issue(
-                        name,
-                        "selection_binding",
-                        "До E нужен фактический выбор по закреплённому плану",
-                    )
 
     def model_index(self, report: Any) -> None:
         entries = report.get("configurations") if isinstance(report, dict) else None
@@ -1069,7 +1019,13 @@ class _Validation:
                 )
             if report:
                 self.issues.extend(validate_final_evaluation(report, self.m))
-                for key in ("metrics", "intervals", "maturity", "metadata_sensitivity", "statuses"):
+                for key in (
+                    "metrics",
+                    "intervals",
+                    "observation",
+                    "metadata_sensitivity",
+                    "statuses",
+                ):
                     if not report.get(key):
                         self.issue(
                             f"evidence.final_evaluation.{key}",
@@ -1090,62 +1046,6 @@ class _Validation:
                         "status_binding",
                         "Статус расходится с отчётом",
                     )
-                if (
-                    statuses.get("calibration_status")
-                    != self.m["verification"]["calibration_status"]
-                ):
-                    self.issue(
-                        "verification.calibration_status",
-                        "status_binding",
-                        "Статус калибровки на D расходится с отчётом",
-                    )
-                calibration_status = self.m["verification"]["calibration_status"]
-                if calibration_status not in ("passed", "failed", "insufficient"):
-                    self.issue(
-                        "verification.calibration_status",
-                        "final_calibration_status",
-                        "На D нужен итоговый статус калибровки",
-                        "results",
-                    )
-                elif calibration_status == "passed":
-                    fit = self.evidence("calibration")
-                    if fit is None or fit.get("status") != "passed":
-                        self.issue(
-                            "verification.calibration_status",
-                            "calibration_unfitted",
-                            "Успех на D требует пригодной замороженной подгонки E",
-                        )
-                    calibrator = self.read_hash(
-                        self.need("artifacts.calibrator_sha256"),
-                        "artifacts.calibrator_sha256",
-                        envelope=True,
-                    )
-                    if calibrator is not None and calibrator.get("kind") != "calibrator":
-                        self.issue(
-                            "artifacts.calibrator_sha256",
-                            "calibrator_kind",
-                            "Ссылка не указывает на совместимый артефакт калибратора",
-                        )
-                if self.m["verification"]["calibration_status"] in ("failed", "insufficient"):
-                    if (
-                        not isinstance(report.get("calibration_reason"), str)
-                        or not report["calibration_reason"].strip()
-                    ):
-                        self.issue(
-                            "evidence.final_evaluation.calibration_reason",
-                            "calibration_reason",
-                            "Нужна отдельная причина непригодности калибровки на D",
-                        )
-                    if (
-                        self.m["base_model"]["diversity_penalty"] != 0
-                        or self.m["calibration"]["changes_main_ranking"]
-                    ):
-                        self.issue(
-                            "verification.calibration_status",
-                            "calibration_required",
-                            "Решение зависит от непригодной калибровки",
-                            "gate",
-                        )
                 if self.m["verification"]["offline_status"] != "passed":
                     self.issue(
                         "verification.offline_status",
@@ -1287,49 +1187,6 @@ class _Validation:
                 raise ValueError("Блок чувствительности длиннее сетки")
         except (ValueError, TypeError, ZeroDivisionError) as exc:
             self.issue("inference", "calendar_grid", str(exc))
-        cal = self.evidence("calibration")
-        if cal:
-            status = cal.get("status")
-            if (
-                cal.get("calibration_plan_sha256")
-                != self.m["freeze"]["plan_references"]["before_E"]
-            ):
-                self.issue(
-                    "evidence.calibration",
-                    "calibration_binding",
-                    "Подгонка E не связана с закреплённой процедурой",
-                )
-            if status not in ("passed", "failed", "insufficient") or (
-                self.index == 4 and status != self.m["verification"]["calibration_status"]
-            ):
-                self.issue(
-                    "verification.calibration_status",
-                    "calibration_status",
-                    "Нет результата подгонки E",
-                )
-            if status in ("failed", "insufficient"):
-                if not cal.get("reason"):
-                    self.issue(
-                        "evidence.calibration", "calibration_reason", "Нет причины непригодности"
-                    )
-                if (
-                    self.m["base_model"]["diversity_penalty"] != 0
-                    or self.m["calibration"]["changes_main_ranking"]
-                ):
-                    self.issue(
-                        "evidence.calibration",
-                        "calibration_required",
-                        "Политика требует пригодных вероятностей",
-                        "gate",
-                    )
-            else:
-                for key in ("dependence_assumptions", "block_plan", "ece_regularity_justification"):
-                    self.need(f"calibration.{key}")
-                self.read_hash(
-                    self.need("artifacts.calibrator_sha256"),
-                    "artifacts.calibrator_sha256",
-                    envelope=True,
-                )
 
     def production(self) -> None:
         self.issues.extend(validate_online_plan(self.m))
@@ -1439,7 +1296,7 @@ def validate_manifest(
         stage_name = "preflight"
     if structure:
         return ValidationResult(False, False, False, False, structure)
-    if operation not in {None, "calibrate", "evaluate"}:
+    if operation not in {None, "evaluate"}:
         return ValidationResult(
             True,
             False,

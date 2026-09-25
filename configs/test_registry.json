@@ -98,8 +98,8 @@
     },
     "B06": {
       "test_id": "B06",
-      "part": "maturity",
-      "complete_test": true,
+      "part": "admission",
+      "complete_test": false,
       "paths": [
         "tests/unit/test_e1_targets.py",
         "tests/properties/test_e1_targets_properties.py",
@@ -109,22 +109,21 @@
         "tests/reference/e1_targets_oracle.py",
         "tests/reference/e1_periods_oracle.py"
       ],
-      "coverage": "Допуск, полнота, зрелость и неизвестные цели на искусственных данных",
-      "remaining": "Фактическое покрытие потока — Э1-10"
+      "coverage": "Календарный допуск и сохранение неизвестных исходов",
+      "remaining": "Расчёт зарегистрированных целей по observed_purchases_v1"
     },
     "B09": {
       "test_id": "B09",
-      "part": "cohort",
-      "complete_test": true,
+      "part": "disabled_purchase_feature",
+      "complete_test": false,
       "paths": [
-        "tests/unit/test_e1_cohort.py",
-        "tests/properties/test_e1_targets_properties.py"
+        "tests/unit/test_manifest_protocol.py"
       ],
       "reference_paths": [
-        "tests/reference/e1_targets_oracle.py"
+        "tests/reference/manifest_cases.py"
       ],
-      "coverage": "Первый просмотр пары, окно и зрелость исторической когорты",
-      "remaining": "Сборка исторического пакета — Э2"
+      "coverage": "Запрет исторической покупочной частоты в паспорте",
+      "remaining": "Нулевой признак и маска доступности в расчёте признаков — Э3"
     },
     "B10.periods": {
       "test_id": "B10",
@@ -140,7 +139,7 @@
         "tests/reference/e1_periods_oracle.py"
       ],
       "coverage": "Семь частей, воспроизводимая подвыборка и запрет закрытых исходов",
-      "remaining": "Ранжировщик — к post_training; калибровка — до E, вариант без метаданных — к D"
+      "remaining": "Ранжировщик — к post_training, вариант без метаданных — к D"
     },
     "B13.preparation": {
       "test_id": "B13",
@@ -149,7 +148,7 @@
       "paths": [
         "tests/unit/test_artifacts.py",
         "tests/unit/test_manifest.py",
-        "tests/unit/test_manifest_v28.py",
+        "tests/unit/test_manifest_protocol.py",
         "tests/unit/test_feature_schema.py",
         "tests/integration/test_cli_workflow.py",
         "tests/integration/test_manifest_stages.py",
@@ -166,7 +165,7 @@
         "tests/reference/manifest_cases.py",
         "tests/reference/supply_oracle.py"
       ],
-      "coverage": "Валидатор 2.8, хранение, подготовка Э1 и формат поставки Coveo",
+      "coverage": "Валидатор 2.10, хранение, подготовка Э1 и формат поставки Coveo",
       "remaining": "Не подтверждает полноту фактического паспорта или реальный preflight"
     },
     "B05.numerics": {

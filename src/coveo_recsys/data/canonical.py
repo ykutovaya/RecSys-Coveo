@@ -64,6 +64,7 @@ def _external_sort(
     chunk_size: int,
     chunk_bytes: int,
     fan_in: int,
+    check_resources: Callable[[], None] | None = None,
 ) -> Generator[RawEvent, None, None]:
     directory.mkdir()
     chunks: list[Path] = []
@@ -75,6 +76,8 @@ def _external_sort(
         with path.open("wb") as stream:
             for event in sorted(batch, key=key):
                 stream.write(to_json(event) + b"\n")
+        if check_resources is not None:
+            check_resources()
         chunks.append(path)
 
     for event in events:
@@ -97,8 +100,17 @@ def _external_sort(
             with ExitStack() as stack, path.open("wb") as output:
                 streams = [stack.enter_context(p.open("rb")) for p in sources]
                 iterators = [(from_json(line, RawEvent) for line in stream) for stream in streams]
-                for event in heapq.merge(*iterators, key=key):
-                    output.write(to_json(event) + b"\n")
+                pending_bytes = 0
+                for count, event in enumerate(heapq.merge(*iterators, key=key), 1):
+                    pending_bytes += output.write(to_json(event) + b"\n")
+                    if check_resources is not None and (
+                        count % 1024 == 0 or pending_bytes >= 1_048_576
+                    ):
+                        output.flush()
+                        check_resources()
+                        pending_bytes = 0
+            if check_resources is not None:
+                check_resources()
             for source in sources:
                 source.unlink()
             merged.append(path)
@@ -225,6 +237,7 @@ def canonicalize(
     fan_in: int = 32,
     max_group_events: int = 100_000,
     max_group_bytes: int = 67_108_864,
+    check_resources: Callable[[], None] | None = None,
 ) -> Generator[CanonicalBlock, None, None]:
     for value in (chunk_size, chunk_bytes, fan_in, max_group_events, max_group_bytes):
         require_int64(value)
@@ -244,6 +257,7 @@ def canonicalize(
             chunk_size=chunk_size,
             chunk_bytes=chunk_bytes,
             fan_in=fan_in,
+            check_resources=check_resources,
         )
         resources.callback(identity_order.close)
         deduplicated = _deduplicate(identity_order, max_group_bytes)
@@ -255,6 +269,7 @@ def canonicalize(
             chunk_size=chunk_size,
             chunk_bytes=chunk_bytes,
             fan_in=fan_in,
+            check_resources=check_resources,
         )
         resources.callback(time_order.close)
         for _, group in itertools.groupby(

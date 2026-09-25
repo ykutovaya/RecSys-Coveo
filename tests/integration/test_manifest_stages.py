@@ -38,10 +38,14 @@ def test_legacy_test_registry_is_not_accepted(tmp_path: Path) -> None:
     assert not validate_manifest(manifest, "preflight", store, plan_references=plans).gate_passed
 
 
-def test_future_load_unneeded_and_unfit_calibration_does_not_block_ranking(tmp_path: Path) -> None:
+def test_unknown_telemetry_and_disabled_calibration_allow_pre_d(tmp_path: Path) -> None:
     store = LocalArtifactStore(tmp_path)
     manifest, plans = make_manifest_case(store, "pre_D")
-    assert manifest["artifacts"]["calibrator_sha256"] is None
+    assert manifest["dataset"]["telemetry_completeness"] == "unknown"
+    assert manifest["calibration"]["enabled"] is False
+    assert manifest["verification"]["calibration_status"] == "not_used"
+    assert "before_E" not in plans
+    assert "calibrator_sha256" not in manifest["artifacts"]
     assert validate_manifest(manifest, "pre_D", store, plan_references=plans).gate_passed
     manifest["verification"]["results_by_stage"]["pre_D"] = None
     assert not validate_manifest(manifest, "pre_D", store, plan_references=plans).results_complete
@@ -51,7 +55,7 @@ def test_external_plan_reference_and_immutable_evaluation_inputs(tmp_path: Path)
     store = LocalArtifactStore(tmp_path)
     manifest, plans = make_manifest_case(store, "post_D")
     assert not validate_manifest(manifest, "post_D", store).gate_passed
-    manifest["inference"]["single_policy_half_width_per_1000"] = 999
+    manifest["inference"]["single_policy_half_width_fraction"] = 0.9
     result = validate_manifest(manifest, "post_D", store, plan_references=plans)
     assert any(issue.code == "evaluation_plan_changed" for issue in result.issues)
 

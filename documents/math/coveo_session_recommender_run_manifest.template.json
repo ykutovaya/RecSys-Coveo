@@ -1,11 +1,11 @@
 {
-  "manifest_version": "2.8",
+  "manifest_version": "2.10",
+  "evaluation_protocol": "observed_purchases_v1",
   "status": "template_not_runnable",
   "scope": "offline_first_run",
   "freeze": {
     "plan_references": {
       "before_C_select": null,
-      "before_E": null,
       "before_D": null,
       "before_AB": null
     }
@@ -37,6 +37,7 @@
     "coverage_start_utc": null,
     "coverage_end_utc": null,
     "telemetry_gaps": null,
+    "telemetry_completeness": "unknown",
     "event_semantics": "set_v1",
     "duplicate_sensitivity": "multiset_v1",
     "availability_mode": "a_equals_t",
@@ -103,11 +104,15 @@
     "neural_dtype": "float32"
   },
   "task": {
-    "estimand": "buying_sessions_per_1000_eligible_sessions",
+    "estimand": "first_request_hit_at_20_among_recorded_purchase_sessions",
     "eligibility_rule": "first_valid_detail_block_without_observed_purchase",
+    "target_rule": "distinct_registered_purchase_skus_in_same_session_after_first_request_until_min_horizon_last_recorded_event",
+    "evaluation_cohort": "sessions_with_nonempty_registered_target",
+    "empty_target_outcome": "unknown",
+    "reserved_periods": ["E"],
     "horizon_seconds": 86400,
     "inactivity_seconds": 1800,
-    "max_requests_per_session": 10,
+    "max_requests_per_session": 1,
     "stop_requests_at_first_purchase": true,
     "slate_size": 20,
     "candidate_limit": 300,
@@ -127,7 +132,6 @@
     "history_decay_seconds": 300,
     "search_expiry_seconds": 600,
     "popularity_smoothing": 1,
-    "purchase_frequency_smoothing": 10,
     "vector_epsilon": 1e-12,
     "score_epsilon": 1e-8,
     "search_mode": "exact",
@@ -145,14 +149,8 @@
     "fallback": "recent_time_desc_then_id_then_popularity",
     "diversity_penalty": 0,
     "historical_purchase_feature": {
-      "anchor": "first_detail_per_session_item",
-      "horizon_from": "task.horizon_seconds",
-      "target_interval": "(anchor,anchor+H]",
-      "same_session_only": true,
-      "repeat_views_reset_anchor": false,
-      "maturity": "anchor+H+g<end_A_G",
-      "empty_global_cohort": "unavailable",
-      "zero_item_support": "global_prior"
+      "enabled": false,
+      "reason": "telemetry_completeness_unknown"
     }
   },
   "ranker": {
@@ -182,28 +180,8 @@
     "cat_l2": 0
   },
   "calibration": {
-    "reference_period": "period_B",
-    "fit_period": "period_E",
-    "evaluation_period": "period_D",
-    "eligible_branch": "main",
-    "lambda_a": 0.001,
-    "lambda_b": 0.001,
-    "probability_epsilon": 0.000001,
-    "contract": "sec:model-calibration",
-    "resolved_parameters": null,
-    "changes_main_ranking": false,
-    "dependence_process_contract": "eq:eval-calibration-process",
-    "dependence_assumptions": null,
-    "block_plan": null,
-    "global": {
-      "minimum_class_blocks": 20
-    },
-    "reliability": {
-      "local_minimum_class_sessions": 100,
-      "local_minimum_class_blocks": 20,
-      "local_minimum_session_ess": 100
-    },
-    "ece_regularity_justification": null
+    "enabled": false,
+    "reason": "not_used_in_observed_purchases_v1"
   },
   "selection": {
     "development_period": "period_C_smoke",
@@ -233,13 +211,14 @@
     "minimum_effective_blocks": 20,
     "minimum_nonempty_disjoint_blocks": 20,
     "planned_cells": null,
-    "half_width_per_1000": null,
-    "single_policy_half_width_per_1000": null,
+    "half_width_fraction": null,
+    "single_policy_half_width_fraction": null,
+    "precision_unit": "fraction",
     "dependence_multiplier": null,
     "pilot_provenance": null,
     "dependence_assumptions": {
-      "paired_por": null,
-      "single_policy_por": null
+      "paired_hit": null,
+      "single_policy_hit": null
     },
     "minimum_category_sessions": 100,
     "minimum_category_blocks": 20,
@@ -487,7 +466,8 @@
     "score_contract": "sec:ops-ann-contract",
     "regret_score": "unscaled_bounded_dot_v1",
     "regret_score_formula_references": null,
-    "maximum_empty_approximate_with_nonempty_exact": 0
+    "maximum_empty_approximate_with_nonempty_exact": 0,
+    "maximum_hit_drop_fraction": null
   },
   "online_experiment": {
     "enabled": false,
@@ -541,7 +521,7 @@
     "seed": 17,
     "data_status": "not_run",
     "math_status": "not_run",
-    "calibration_status": "not_run",
+    "calibration_status": "not_used",
     "offline_status": "not_run",
     "serve_status": "not_run",
     "business_status": "not_observed",
@@ -562,21 +542,20 @@
     "primary_estimate_required_fields": {
       "single_policy": [
         "inference.primary_policy_config_id",
-        "inference.single_policy_half_width_per_1000",
+        "inference.single_policy_half_width_fraction",
         "inference.planned_outcome_variance",
-        "inference.dependence_assumptions.single_policy_por"
+        "inference.dependence_assumptions.single_policy_hit"
       ],
       "paired": [
         "selection.primary_comparison",
-        "inference.half_width_per_1000",
+        "inference.half_width_fraction",
         "inference.planned_outcome_variance",
-        "inference.dependence_assumptions.paired_por"
+        "inference.dependence_assumptions.paired_hit"
       ]
     }
   },
   "artifacts": {
     "trained_models_sha256": null,
-    "calibrator_sha256": null,
     "selected_policies_sha256": null,
     "selection_report_sha256": null,
     "final_evaluation_report_sha256": null

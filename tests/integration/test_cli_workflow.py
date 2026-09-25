@@ -8,7 +8,7 @@ def test_one_manifest_without_snapshots_and_blocked_incomplete_preflight(tmp_pat
     run_dir = tmp_path / "run"
     arguments = ["manifest", "init", "--run-id", "test_e0", "--run-dir", str(run_dir)]
     assert main(arguments) == 0
-    assert json.loads(capsys.readouterr().out)["manifest_version"] == "2.8"
+    assert json.loads(capsys.readouterr().out)["manifest_version"] == "2.10"
     manifest_path = run_dir / "manifest.json"
     assert sorted(path.name for path in run_dir.iterdir()) == ["manifest.json"]
     original = manifest_path.read_bytes()

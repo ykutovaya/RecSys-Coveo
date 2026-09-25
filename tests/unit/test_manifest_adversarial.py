@@ -1,7 +1,6 @@
 """B13: отрицательные проверки политик и происхождения свидетельств."""
 
 import json
-from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -39,7 +38,7 @@ def test_old_report_cannot_satisfy_repeat(tmp_path: Path, stage, former) -> None
 @pytest.mark.parametrize(
     "path,value",
     [
-        (("calibration", "fit_period"), "period_D"),
+        (("calibration", "enabled"), True),
         (("inference", "alpha"), 0.99),
         (("inference", "minimum_effective_blocks"), 0),
         (
@@ -75,8 +74,8 @@ def test_summary_failure_cannot_be_ignored(tmp_path: Path, stage, status) -> Non
 def test_paired_preflight_does_not_require_future_winner(tmp_path: Path) -> None:
     store = LocalArtifactStore(tmp_path)
     manifest, plans = make_manifest_case(store, "preflight")
-    manifest["inference"].update(primary_estimate_type="paired", half_width_per_1000=10)
-    manifest["inference"]["dependence_assumptions"]["paired_por"] = {"justification": "synthetic"}
+    manifest["inference"].update(primary_estimate_type="paired", half_width_fraction=0.01)
+    manifest["inference"]["dependence_assumptions"]["paired_hit"] = {"justification": "synthetic"}
     assert manifest["selection"]["primary_comparison"] is None
     result = validate_manifest(manifest, "preflight", store, plan_references=plans)
     assert result.gate_passed, result.issues
@@ -162,8 +161,8 @@ def test_complete_zero_data_report_is_insufficient_and_recordable(tmp_path: Path
     store = LocalArtifactStore(tmp_path)
     manifest, plans = make_manifest_case(store, "post_D")
     report = json.loads(store.read_by_sha256(manifest["evidence"]["final_evaluation"]))
-    report["metrics"] = {"N": 0, "POR": None}
-    report["intervals"] = {"POR": None}
+    report["metrics"] = {"N_obs": 1000, "N": 0, "Hit@20": None}
+    report["intervals"] = {"Hit@20": None}
     report["interval_details"].update(valid=False, reason="no observations")
     report["information"].update(
         nonempty_blocks=0, category_counts={"0": 0, "1": 0}, category_blocks={"0": 0, "1": 0}
@@ -265,82 +264,23 @@ def test_neural_zero_attention_correction_and_sid_zero_penalties_are_legal() -> 
     assert any(issue.path.startswith("neural") for issue in resolved_recipe_issues(manifest))
 
 
-@pytest.mark.parametrize("status", ["passed", "not_run"])
-def test_unfit_E_cannot_be_reported_as_successful_or_unfinished_D(
-    tmp_path: Path, status: str
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("published_rows_complete", False),
+        ("calendar_admission_checked", False),
+        ("registered_targets_checked", False),
+        ("telemetry_completeness", "complete"),
+    ],
+)
+def test_observed_data_still_requires_reading_admission_and_honest_coverage(
+    tmp_path: Path, field: str, value: object
 ) -> None:
     store = LocalArtifactStore(tmp_path)
-    manifest, plans = make_manifest_case(store, "post_D")
-    report = json.loads(store.read_by_sha256(manifest["evidence"]["final_evaluation"]))
-    report["statuses"]["calibration_status"] = manifest["verification"]["calibration_status"] = (
-        status
-    )
-    digest = publish(store, manifest, report)
-    manifest["evidence"]["final_evaluation"] = manifest["artifacts"][
-        "final_evaluation_report_sha256"
-    ] = digest
-    result = validate_manifest(manifest, "post_D", store, plan_references=plans)
+    manifest, plans = make_manifest_case(store, "preflight")
+    report = json.loads(store.read_by_sha256(manifest["evidence"]["data"]))
+    report[field] = value
+    manifest["evidence"]["data"] = publish(store, manifest, report)
+    result = validate_manifest(manifest, "preflight", store, plan_references=plans)
     assert not result.gate_passed
-    assert any(
-        issue.code == ("calibration_unfitted" if status == "passed" else "final_calibration_status")
-        for issue in result.issues
-    )
-
-
-@pytest.mark.parametrize("status", ["passed", "failed", "insufficient"])
-def test_successful_E_allows_final_D_calibration_verdict_without_blocking_raw_scores(
-    tmp_path: Path, status: str
-) -> None:
-    store = LocalArtifactStore(tmp_path)
-    manifest, plans = make_manifest_case(store, "post_D")
-    fit = json.loads(store.read_by_sha256(manifest["evidence"]["calibration"]))
-    fit.update(status="passed", reason=None)
-    manifest["evidence"]["calibration"] = publish(store, manifest, fit)
-    manifest["artifacts"]["calibrator_sha256"] = publish(
-        store,
-        manifest,
-        {
-            "kind": "calibrator",
-            "run_id": manifest["run_id"],
-            "scope": manifest["scope"],
-            "config_id": manifest["base_model"]["config_id"],
-            "evidence_scope": "run",
-            "a": 0,
-            "b": 0,
-        },
-    )
-    for key in ("dependence_assumptions", "block_plan", "ece_regularity_justification"):
-        manifest["calibration"][key] = {"justification": "synthetic B13"}
-    plan = json.loads(store.read_by_sha256(plans["before_D"]))
-    plan["inputs"].update(
-        calibration=deepcopy(manifest["calibration"]),
-        calibration_result_sha256=manifest["evidence"]["calibration"],
-        calibrator_sha256=manifest["artifacts"]["calibrator_sha256"],
-    )
-    digest = publish(store, manifest, plan)
-    plans["before_D"] = manifest["freeze"]["plan_references"]["before_D"] = manifest["evidence"][
-        "evaluation_plan"
-    ] = digest
-    for stage in ("pre_D", "post_D"):
-        tests = json.loads(
-            store.read_by_sha256(manifest["verification"]["results_by_stage"][stage])
-        )
-        tests["applicable_plan_reference"] = digest
-        manifest["verification"]["results_by_stage"][stage] = publish(store, manifest, tests)
-    report = json.loads(store.read_by_sha256(manifest["evidence"]["final_evaluation"]))
-    report["evaluation_plan_sha256"] = plans["before_D"]
-    report["statuses"]["calibration_status"] = manifest["verification"]["calibration_status"] = (
-        status
-    )
-    report["calibration_reason"] = (
-        None if status == "passed" else "synthetic D calibration unavailable"
-    )
-    digest = publish(store, manifest, report)
-    manifest["evidence"]["final_evaluation"] = manifest["artifacts"][
-        "final_evaluation_report_sha256"
-    ] = digest
-    result = validate_manifest(manifest, "post_D", store, plan_references=plans)
-    assert result.gate_passed, result.issues
-    if status == "passed":
-        manifest["artifacts"]["calibrator_sha256"] = None
-        assert not validate_manifest(manifest, "post_D", store, plan_references=plans).gate_passed
+    assert any(issue.path == f"evidence.data.{field}" for issue in result.issues)

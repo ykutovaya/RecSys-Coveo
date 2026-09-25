@@ -79,3 +79,48 @@ def test_absent_search_has_one_canonical_marker_without_order_dependence():
     assert a == b
     assert a.events[0].search == SearchPayload(None, "vector_absent")
     assert a.search_multiplicities == (2,)
+
+
+def test_resource_check_observes_partial_merge_and_input_output_peak(tmp_path):
+    measured = []
+
+    def check_resources():
+        for output in tmp_path.rglob("merge-*.jsonl"):
+            sources = list(output.parent.glob("chunk-*.jsonl"))
+            if sources:
+                measured.append(
+                    (output.stat().st_size, sum(path.stat().st_size for path in sources))
+                )
+
+    blocks = list(
+        canonicalize(
+            (event(str(i)) for i in range(1025)),
+            temp_dir=tmp_path,
+            chunk_size=512,
+            fan_in=3,
+            check_resources=check_resources,
+        )
+    )
+    assert blocks[0].raw_multiplicities[0][1] == 1025
+    assert any(0 < output < inputs for output, inputs in measured)
+    assert any(output == inputs for output, inputs in measured)
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("stage", ["chunk", "merge"])
+def test_resource_callback_refusal_cleans_temporary_sort_files(tmp_path, stage):
+    def check_resources():
+        if any(path.stat().st_size for path in tmp_path.rglob(f"{stage}-*.jsonl")):
+            raise InputValidationError("test_resource_limit")
+
+    with pytest.raises(InputValidationError, match="test_resource_limit"):
+        list(
+            canonicalize(
+                (event(str(i)) for i in range(5)),
+                temp_dir=tmp_path,
+                chunk_size=1,
+                fan_in=2,
+                check_resources=check_resources,
+            )
+        )
+    assert not list(tmp_path.iterdir())

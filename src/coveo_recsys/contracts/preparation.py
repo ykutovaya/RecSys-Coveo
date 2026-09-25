@@ -119,7 +119,7 @@ class Period(Record):
 
 @dataclass(frozen=True, slots=True)
 class PreparationPlan(Record):
-    """Зафиксированный искусственный план; не паспорт фактического запуска."""
+    """План подготовки; техническая выборка не даёт допуска к обучению."""
 
     scope: str
     source_namespace: str
@@ -135,12 +135,22 @@ class PreparationPlan(Record):
     max_session_blocks: int = 100_000
     max_session_bytes: int = 16_777_216
     max_sessions: int = 100_000
+    diagnostic_sessions: int = 0
+    max_seconds: int = 1800
+    max_memory_bytes: int = 536_870_912
+    max_temp_bytes: int = 268_435_456
 
     def __post_init__(self) -> None:
         Record.__post_init__(self)
         id_bytes(self.source_namespace)
-        if self.scope != "synthetic" or self.seed != 17:
-            raise InputValidationError("Э1 поддерживает только искусственный план с seed=17")
+        if self.scope not in {"synthetic", "actual"} or self.seed != 17:
+            raise InputValidationError("Неверная область плана или seed != 17")
+        if not 0 <= self.diagnostic_sessions <= self.max_sessions or (
+            self.scope == "actual" and self.diagnostic_sessions == 0
+        ):
+            raise InputValidationError(
+                "Реальная подготовка требует ограниченной технической выборки"
+            )
         if self.coverage.source_namespace != self.source_namespace:
             raise InputValidationError("Покрытие относится к другому пространству источника")
         if tuple(p.name for p in self.periods) != PERIOD_NAMES or any(
@@ -156,6 +166,9 @@ class PreparationPlan(Record):
                 self.max_session_blocks,
                 self.max_session_bytes,
                 self.max_sessions,
+                self.max_seconds,
+                self.max_memory_bytes,
+                self.max_temp_bytes,
             )
             <= 0
             or self.fan_in < 2

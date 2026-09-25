@@ -23,8 +23,8 @@ def resource_bytes(relative_path: str) -> bytes:
 def load_template() -> dict[str, Any]:
     content = resource_bytes("documents/math/coveo_session_recommender_run_manifest.template.json")
     result: dict[str, Any] = strict_json_loads(content)
-    if result.get("manifest_version") != "2.8":
-        raise ValueError("Требуется нормативный шаблон 2.8")
+    if result.get("manifest_version") != "2.10":
+        raise ValueError("Требуется нормативный шаблон 2.10")
     return result
 
 

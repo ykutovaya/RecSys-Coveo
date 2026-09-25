@@ -14,6 +14,8 @@ from coveo_recsys.config.evidence import (
 
 def example() -> tuple[dict, dict, dict]:
     manifest = {
+        "evaluation_protocol": "observed_purchases_v1",
+        "dataset": {"telemetry_completeness": "unknown"},
         "evidence": {"evaluation_plan": "a" * 64},
         "task": {"horizon_seconds": 86400, "inactivity_seconds": 1800},
         "inference": {
@@ -23,7 +25,8 @@ def example() -> tuple[dict, dict, dict]:
             "bootstrap_repetitions": 2000,
             "primary_interval": "calendar_moving_block_bootstrap",
             "alpha": 0.05,
-            "single_policy_half_width_per_1000": 10,
+            "single_policy_half_width_fraction": 0.01,
+            "precision_unit": "fraction",
         },
         "verification": {"offline_status": "passed", "business_status": "passed"},
         "online_experiment": {
@@ -73,10 +76,15 @@ def example() -> tuple[dict, dict, dict]:
         },
     }
     offline = {
+        "evaluation_protocol": "observed_purchases_v1",
         "evaluation_plan_sha256": "a" * 64,
-        "metrics": {"N": 1000, "POR": 200.0},
-        "intervals": {"POR": [190.0, 210.0]},
-        "maturity": {"complete": True},
+        "metrics": {"N_obs": 1500, "N": 1000, "Hit@20": 0.2},
+        "intervals": {"Hit@20": [0.19, 0.21]},
+        "observation": {
+            "published_rows_complete": True,
+            "calendar_admission_checked": True,
+            "telemetry_completeness": "unknown",
+        },
         "metadata_sensitivity": {"evaluated": True},
         "statuses": {"offline_status": "passed"},
         "contract_violations": [],
@@ -149,16 +157,16 @@ def test_positive_contracts() -> None:
     "mutation",
     [
         lambda r: r["metrics"].update(N=0),
-        lambda r: r["intervals"].update(POR=[200.0, 200.0]),
+        lambda r: r["intervals"].update({"Hit@20": [0.2, 0.2]}),
         lambda r: r.update(statuses=["passed"]),
-        lambda r: r["metrics"].update(POR=900.0),
+        lambda r: r["metrics"].update({"Hit@20": 0.9}),
         lambda r: r.update(evaluation_plan_sha256="c" * 64),
         lambda r: r["information"].update(nonempty_blocks=10),
         lambda r: r["information"].update(undefined_repetitions=1),
         lambda r: r["information"].update(dependence_assumptions_satisfied=False),
         lambda r: r["interval_details"].update(confidence_level=0.1),
         lambda r: r["metrics"].update(N=True),
-        lambda r: r["metrics"].update(POR=10**400),
+        lambda r: r["metrics"].update({"Hit@20": 10**400}),
     ],
 )
 def test_false_offline_passed_rejected(mutation) -> None:
@@ -170,36 +178,42 @@ def test_false_offline_passed_rejected(mutation) -> None:
 def test_empty_offline_result_is_retained_insufficient() -> None:
     manifest, offline, _ = example()
     manifest["verification"]["offline_status"] = "insufficient"
-    offline["metrics"] = {"N": 0, "POR": None}
-    offline["intervals"]["POR"] = None
-    offline["interval_details"].update(valid=False, reason="no mature sessions")
+    offline["metrics"] = {"N_obs": 1500, "N": 0, "Hit@20": None}
+    offline["intervals"]["Hit@20"] = None
+    offline["interval_details"].update(valid=False, reason="no registered target")
     offline["information"].update(
         nonempty_blocks=0, category_counts={"0": 0, "1": 0}, category_blocks={"0": 0, "1": 0}
     )
     offline["statuses"]["offline_status"] = "insufficient"
-    offline["reason"] = "no mature sessions"
+    offline["reason"] = "no registered target"
     assert_gate_only(validate_final_evaluation(offline, manifest))
 
 
-@pytest.mark.parametrize("condition", ["degenerate", "width", "rare", "violation"])
+@pytest.mark.parametrize(
+    "condition", ["degenerate", "width", "rare", "violation", "missing_rows", "calendar"]
+)
 def test_negative_offline_results_are_not_structural_errors(condition: str) -> None:
     manifest, offline, _ = example()
-    status = "failed" if condition == "violation" else "insufficient"
+    status = "failed" if condition in {"violation", "missing_rows", "calendar"} else "insufficient"
     manifest["verification"]["offline_status"] = status
     offline["statuses"]["offline_status"] = status
     offline["reason"] = condition
     if condition == "degenerate":
-        offline["intervals"]["POR"] = [200.0, 200.0]
+        offline["intervals"]["Hit@20"] = [0.2, 0.2]
         offline["interval_details"].update(valid=False, reason=condition)
     elif condition == "width":
-        offline["intervals"]["POR"] = [180.0, 220.0]
+        offline["intervals"]["Hit@20"] = [0.18, 0.22]
     elif condition == "rare":
-        offline["metrics"]["POR"] = 1.0
+        offline["metrics"]["Hit@20"] = 0.001
         offline["information"].update(
             category_counts={"0": 999, "1": 1}, category_blocks={"0": 20, "1": 1}
         )
-        offline["intervals"]["POR"] = [0.0, 4.0]
+        offline["intervals"]["Hit@20"] = [0.0, 0.004]
         offline["interval_details"].update(valid=False, reason=condition)
+    elif condition == "missing_rows":
+        offline["observation"]["published_rows_complete"] = False
+    elif condition == "calendar":
+        offline["observation"]["calendar_admission_checked"] = False
     else:
         offline["contract_violations"] = ["changed source"]
     assert_gate_only(validate_final_evaluation(offline, manifest))
@@ -207,9 +221,9 @@ def test_negative_offline_results_are_not_structural_errors(condition: str) -> N
 
 def test_paired_categories_and_signed_estimate() -> None:
     manifest, offline, _ = example()
-    manifest["inference"].update(primary_estimate_type="paired", half_width_per_1000=10)
-    offline["metrics"] = {"N": 1000, "DeltaPOR": -100.0}
-    offline["intervals"] = {"DeltaPOR": [-110.0, -90.0]}
+    manifest["inference"].update(primary_estimate_type="paired", half_width_fraction=0.01)
+    offline["metrics"] = {"N_obs": 1500, "N": 1000, "DeltaHit@20": -0.1}
+    offline["intervals"] = {"DeltaHit@20": [-0.11, -0.09]}
     offline["information"].update(
         category_counts={"-1": 200, "0": 700, "1": 100},
         category_blocks={"-1": 20, "0": 20, "1": 20},
@@ -217,10 +231,34 @@ def test_paired_categories_and_signed_estimate() -> None:
     assert not validate_final_evaluation(offline, manifest)
 
 
-def test_offline_denominator_cannot_exceed_selected_sessions() -> None:
+@pytest.mark.parametrize("n_obs,selected", [(999, 1500), (1501, 1500)])
+def test_offline_denominators_cannot_exceed_their_cohorts(n_obs: int, selected: int) -> None:
     manifest, offline, _ = example()
-    manifest["dataset"] = {"session_sampling": {"session_count_by_period": {"period_D": 10}}}
+    manifest["dataset"]["session_sampling"] = {"session_count_by_period": {"period_D": selected}}
+    offline["metrics"]["N_obs"] = n_obs
     assert any(x.code == "sample_count" for x in validate_final_evaluation(offline, manifest))
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda r: r.pop("evaluation_protocol"),
+        lambda r: r.update(evaluation_protocol="complete_observation"),
+        lambda r: r.update(maturity={"complete": True}),
+        lambda r: r["observation"].update(telemetry_completeness="complete"),
+        lambda r: r["observation"].update(telemetry_completeness=False),
+        lambda r: r["metrics"].update(POR=200.0),
+        lambda r: r["intervals"].update(DeltaPOR=[-110.0, -90.0]),
+        lambda r: r["metrics"].pop("N_obs"),
+        lambda r: r["metrics"].update(N_obs=True),
+        lambda r: r["intervals"].update({"Hit@20": [-0.01, 0.21]}),
+        lambda r: r["intervals"].update({"Hit@20": [0.19, 1.01]}),
+    ],
+)
+def test_observed_report_cannot_claim_old_protocol_or_unknown_cohort(mutation) -> None:
+    manifest, offline, _ = example()
+    mutation(offline)
+    assert any(x.layer != "gate" for x in validate_final_evaluation(offline, manifest))
 
 
 @pytest.mark.parametrize(
