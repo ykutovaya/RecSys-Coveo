@@ -110,22 +110,11 @@ def prefix(blocks, event_cutoff, availability_cutoff, config):
 
 
 def schedule(blocks, config):
-    """Прямое определение расписания для исторического a=t."""
-    first = None
-    purchase_seen = False
-    result = []
+    """Первый detail до зарегистрированной покупки, историческое a=t."""
     for block in sorted(blocks, key=lambda item: item.event_time_ms):
         actions = {event.event_type.value for event in block.events}
-        purchase_seen |= "purchase" in actions
-        if purchase_seen or len(result) >= config.max_requests:
-            continue
-        if first is None:
-            if "detail" not in actions:
-                continue
-            first = block.event_time_ms
-        if (
-            actions.intersection({"detail", "search"})
-            and block.event_time_ms <= first + config.horizon_ms
-        ):
-            result.append((block.event_time_ms, block.block_id, len(result) + 1))
-    return result
+        if "purchase" in actions:
+            return []
+        if "detail" in actions:
+            return [(block.event_time_ms, block.block_id, 1)]
+    return []

@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from coveo_recsys.contracts import InputValidationError
 from coveo_recsys.contracts.preparation import PreparedRequest, ScheduleCursor, TaskConfig
 from coveo_recsys.contracts.records import EventType, PrefixSnapshot
-from coveo_recsys.numerics import checked_add, counter_add
+from coveo_recsys.numerics import checked_add
 
 
 def advance_schedule(
@@ -40,17 +40,11 @@ def advance_schedule(
         return cursor, None
 
     actions = {event.event_type for event in triggers[0].events}
-    first_time = cursor.first_request_time_ms
-    if first_time is None:
-        if EventType.DETAIL not in actions:
-            return cursor, None
-        first_time = prefix.event_cutoff_ms
-    elif not actions.intersection((EventType.DETAIL, EventType.SEARCH)):
+    if EventType.DETAIL not in actions:
         return cursor, None
-    if prefix.event_cutoff_ms > checked_add(first_time, config.horizon_ms):
-        return cursor, None
-
-    ordinal = counter_add(cursor.request_count, 1)
+    first_time = prefix.event_cutoff_ms
+    checked_add(first_time, config.horizon_ms)
+    ordinal = 1
     identity = [
         "prepared_request_v1",
         prefix.source_namespace,

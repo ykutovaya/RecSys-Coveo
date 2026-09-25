@@ -36,6 +36,9 @@ def actual_inputs(tmp_path):
         + [
             [selected[0], "event_product", "purchase", "sku-b", 120, "url"],
             [selected[0], "pageview", "", "", 210_000_000, "url"],
+            [selected[1], "event_product", "purchase", "sku-b", 170, "url"],
+            [selected[1], "event_product", "purchase", "sku-b", 180, "url"],
+            [selected[1], "event_product", "purchase", "sku-c", 180, "url"],
             ["closed-period", "event_product", "detail", "sku-b", 1_300_000_000, "url"],
         ],
         "search_train.csv": [[selected[1], vector, "['sku-b']", "['sku-a']", 150]],
@@ -58,7 +61,8 @@ def actual_inputs(tmp_path):
         source_namespace="coveo-sigir-1.0.0",
         task=replace(base.task, query_dimension=50),
         coverage=replace(base.coverage, source_namespace="coveo-sigir-1.0.0", confirmed_at_ms=None),
-        diagnostic_sessions=2,
+        periods=tuple(replace(p, sample_size=2 if p.name == "A_G" else 0) for p in base.periods),
+        diagnostic_sessions=0,
     )
     plan_path = tmp_path / "plan.json"
     plan_path.write_bytes(to_json(plan))
@@ -76,40 +80,161 @@ def records(store, path, kind):
     return tuple(from_json(v, kind) for v in store.read_table(path)["record_json"].to_pylist())
 
 
-def test_actual_unknown_targets_survive_without_admitted_dataset(actual_inputs, tmp_path):
+def test_actual_selection_uses_admission_and_keeps_unknown_empty_targets(
+    actual_inputs, tmp_path, monkeypatch
+):
+    def no_repeated_supply_audit(*args, **kwargs):
+        raise AssertionError("Подготовка не повторяет полный аудит поставки")
+
+    monkeypatch.setattr("coveo_recsys.cli.preparation.inspect_supply", no_repeated_supply_audit)
     destination = tmp_path / "run"
     result = run(actual_inputs, destination)
     store = LocalArtifactStore(destination)
-    assert result["status"] == "prepared_diagnostic"
+    assert result["status"] == "prepared"
     assert result["scope"] == "actual" and not result["real_preflight"]
-    assert result["datasets"] == [] and all(not ids for ids in result["selection"].values())
+    excluded = actual_inputs[3][0]
+    expected = sorted({"session-a", "session-b", "session-c"} - {excluded}, key=session_key)
+    assert result["selection"]["A_G"] == expected
+    assert all(not ids for p, ids in result["selection"].items() if p != "A_G")
     assert result["canonical_sessions"] == 2
-    assert set(result["technical_selection"]) == set(actual_inputs[3])
+    assert result["exclusions"]["late_A_G_tail"] == 1
+    assert result["period_counts"]["A_G"]["admitted"] == 2
     sessions = records(store, "preparation/sessions.parquet", SessionRecord)
     assert result["request_count"] == sum(s.request_count for s in sessions) > 0
-    assert all(not s.mature and not s.coverage_complete for s in sessions)
+    assert all(s.admitted and s.telemetry_complete is None for s in sessions)
     blocks, targets = [], []
     access = DatasetAccess(
         store, code_sha256=result["source_sha256"], run_id="actual-test", scope="actual"
     )
-    for dataset in result["diagnostic_datasets"]:
+    for dataset in result["datasets"]:
         blocks.extend(records(store, dataset["canonical_path"], CanonicalBlock))
         targets.extend(records(store, dataset["targets"], TargetRecord))
         requests = records(store, dataset["prefixes"], PreparedRequest)
         assert len(requests) == dataset["requests"]
-        with pytest.raises(InputValidationError):
-            access.read(dataset["targets"], purpose="labels")
-    assert any(b.event_time_ms == 210_000_000 for b in blocks), "Нельзя обрезать хвост сессии"
+        assert access.read(dataset["targets"], purpose="labels")
+    assert all(b.session_id != excluded for b in blocks), "Поздний хвост исключает всю сессию"
     assert len(targets) == result["request_count"]
-    assert all(
-        t.status == OutcomeStatus.UNKNOWN and t.b_s is None and t.purchases is None and t.reason
-        for t in targets
-    )
-    assert not (destination / "datasets").exists() and not (destination / "cohort").exists()
+    assert sorted(t.purchases for t in targets) == [(), ("sku-b", "sku-c")]
+    assert any(t.status == OutcomeStatus.UNKNOWN and t.reason for t in targets if not t.purchases)
+    assert result["N_obs"] == 2 and result["N_plus"] == 1
+    assert result["composition"]["detail"]["sessions"] == 2
+    assert result["composition"]["target_window"]["sessions_by_target_size"] == {"0": 1, "2": 1}
+    assert not (destination / "diagnostic").exists() and not (destination / "cohort").exists()
     assert all(
         store.describe(p.relative_to(destination).as_posix()[:-14]).scope == "actual"
         for p in destination.rglob("*.artifact.json")
     )
+
+
+def test_composition_counts_canonical_actions_sessions_and_target_window(actual_inputs, tmp_path):
+    source, profile_path, plan_path, selected = actual_inputs
+    positive = selected[1]
+    other = ({"session-a", "session-b", "session-c"} - set(selected)).pop()
+    extra = [
+        [positive, "event_product", "detail", "sku-a", 100, "url"],  # set_v1 повтор
+        [positive, "event_product", "detail", "sku-a", 110, "url"],
+        [positive, "event_product", "purchase", "sku-d", 90_000_000, "url"],  # вне H
+        [other, "event_product", "detail", "sku-a", 110, "url"],
+        [other, "event_product", "detail", "sku-b", 111, "url"],
+        [other, "event_product", "purchase", "sku-b", 120, "url"],
+        ["fourth", "event_product", "detail", "sku-a", 100, "url"],
+        ["fourth", "event_product", "add", "sku-d", 110, "url"],
+        ["fourth", "event_product", "purchase", "sku-b", 130, "url"],
+    ]
+    path = source / "browsing_train.csv"
+    with path.open("a", encoding="utf-8", newline="") as stream:
+        csv.writer(stream).writerows(extra)
+    profile = json.loads(profile_path.read_bytes())
+    profile["files"][path.name].update(
+        expected_sha256=sha256_file(path), expected_size_bytes=path.stat().st_size
+    )
+    profile_path.write_text(json.dumps(profile), encoding="utf-8")
+    plan = from_json(plan_path.read_bytes(), PreparationPlan)
+    plan_path.write_bytes(
+        to_json(
+            replace(
+                plan,
+                periods=tuple(
+                    replace(p, sample_size=10) if p.name == "A_G" else p for p in plan.periods
+                ),
+            )
+        )
+    )
+    result = run(actual_inputs, tmp_path / "run")
+    assert (result["N_eligible"], result["N_admitted"], result["N_obs"], result["N_plus"]) == (
+        4,
+        3,
+        3,
+        3,
+    )
+    assert result["selection_shortfalls"] == {
+        "A_G": {"requested": 10, "admitted": 3, "selected": 3, "reason": "fewer_admitted_sessions"}
+    }
+    assert result["canonical_blocks"] == 13
+    assert result["composition"] == {
+        "event_semantics": "set_v1",
+        "source_rows": {"browsing_train.csv": 14, "search_train.csv": 1},
+        "product_skus": 4,
+        "detail": {
+            "events": 6,
+            "sessions": 3,
+            "skus": 2,
+            "skus_in_at_least_2_sessions": 1,
+            "skus_in_at_least_3_sessions": 1,
+        },
+        "purchase": {
+            "events": 6,
+            "sessions": 3,
+            "skus": 3,
+            "skus_in_at_least_2_sessions": 1,
+            "skus_in_at_least_3_sessions": 1,
+        },
+        "repeated_detail_session_sku_pairs": 2,
+        "target_window": {
+            "purchase_events": 5,
+            "skus": 2,
+            "sessions_by_target_size": {"1": 2, "2": 1},
+        },
+    }
+
+
+@pytest.mark.parametrize("step", ["canonical_session", "prepared_session", "reading"])
+def test_frequent_budget_checks_scan_only_temporary_files(tmp_path, monkeypatch, step):
+    preparation = Preparation(LocalArtifactStore(tmp_path / "run"), ROOT, "budget-test")
+    plan = from_json((ROOT / "configs/synthetic_preparation.json").read_bytes(), PreparationPlan)
+    preparation.plan = replace(plan, max_temp_bytes=10)
+    temporary = preparation.store.root / ".prepare-test" / "nested"
+    temporary.mkdir(parents=True)
+    chunk = temporary / "chunk"
+    chunk.write_bytes(b"0123456789")
+    original = Path.rglob
+
+    def temporary_only(path, pattern):
+        assert any(part.startswith(".prepare-") for part in path.parts)
+        return original(path, pattern)
+
+    monkeypatch.setattr(Path, "rglob", temporary_only)
+    preparation.progress(step, sessions=1)
+    assert preparation.temp_peak == 10
+    chunk.write_bytes(b"01234567890")
+    with pytest.raises(InputValidationError, match="бюджет"):
+        preparation.progress(step, sessions=2)
+
+
+def test_missing_published_row_is_not_unknown_telemetry(actual_inputs, tmp_path, monkeypatch):
+    from coveo_recsys.cli import preparation as module
+
+    original = module.iter_events
+
+    def missing(*args, **kwargs):
+        for event in original(*args, **kwargs):
+            if event.event_time_ms != 170:
+                yield event
+
+    monkeypatch.setattr(module, "iter_events", missing)
+    with pytest.raises(InputValidationError, match="строк"):
+        run(actual_inputs, tmp_path / "run")
+    assert not (tmp_path / "run" / REPORT).exists()
 
 
 def test_actual_resume_and_batch_size_preserve_records(actual_inputs, tmp_path, monkeypatch):
@@ -128,10 +253,10 @@ def test_actual_resume_and_batch_size_preserve_records(actual_inputs, tmp_path, 
     assert not (tmp_path / "resumed" / REPORT).exists()
     resumed = run(actual_inputs, tmp_path / "resumed", batch_size=2)
     repeated = run(actual_inputs, tmp_path / "resumed", batch_size=3)
-    assert complete["technical_selection"] == resumed["technical_selection"]
+    assert complete["selection"] == resumed["selection"]
     assert repeated["report_sha256"] == resumed["report_sha256"]
     first, second = (LocalArtifactStore(tmp_path / name) for name in ("complete", "resumed"))
-    for item in complete["diagnostic_datasets"]:
+    for item in complete["datasets"]:
         for key in ("canonical_path", "prefixes", "targets"):
             assert first.read_bytes(item[key]) == second.read_bytes(item[key])
 
@@ -152,7 +277,7 @@ def test_interruption_after_materialization_has_no_success_marker(
             run(actual_inputs, tmp_path / "run")
     store = LocalArtifactStore(tmp_path / "run")
     report = json.loads(store.read_bytes(REPORT))
-    assert report["status"] == "diagnostic_materialized"
+    assert report["status"] == "materialized"
     attempts = [
         json.loads(p.read_bytes())
         for p in (store.root / "preparation/executions").glob("*.json")
@@ -161,7 +286,7 @@ def test_interruption_after_materialization_has_no_success_marker(
     assert len(attempts) == 1 and attempts[0]["status"] == "interrupted"
     assert attempts[0]["reads"] and attempts[0]["elapsed_seconds"] > 0
     resumed = run(actual_inputs, tmp_path / "run")
-    assert resumed["status"] == "prepared_diagnostic"
+    assert resumed["status"] == "prepared"
     assert resumed["execution"]["status"] == "completed"
 
 
@@ -196,7 +321,7 @@ def test_actual_reuse_rejects_changed_identity(actual_inputs, tmp_path, monkeypa
     elif mutation == "code":
         monkeypatch.setattr("coveo_recsys.cli.preparation.source_sha256", lambda _: "f" * 64)
     else:
-        path = destination / result["diagnostic_datasets"][0]["targets"]
+        path = destination / result["datasets"][0]["targets"]
         path.write_bytes(b"corrupted")
     with pytest.raises((ValueError, OSError)):
         run(actual_inputs, destination)

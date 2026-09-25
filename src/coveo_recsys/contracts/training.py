@@ -10,64 +10,57 @@ from .records import Record
 class SessionRecord(Record):
     session_id: str
     admission_ms: int | None
-    close_ms: int | None
-    coverage_complete: bool
     period: str | None
-    mature: bool
+    admitted: bool
     exclusion_reason: str | None
     source_namespace: str = field(kw_only=True)
-    last_event_ms: int | None = None
+    last_event_ms: int = field(kw_only=True)
     target_end_ms: int | None = None
     request_count: int = 0
+    telemetry_complete: bool | None = None
 
     def __post_init__(self) -> None:
         Record.__post_init__(self)
         id_bytes(self.source_namespace)
         require_int64(self.request_count, nonnegative=True)
-        if self.mature and (not self.coverage_complete or self.admission_ms is None):
-            raise InputValidationError("Зрелость окна требует начала и подтверждённого покрытия")
-        if (
-            self.admission_ms is not None
-            and self.last_event_ms is not None
-            and self.admission_ms > self.last_event_ms
+        if self.telemetry_complete is not None:
+            raise InputValidationError("Полнота телеметрии остаётся неизвестной")
+        if self.request_count not in (0, 1) or (self.request_count == 0) != (
+            self.admission_ms is None
         ):
+            raise InputValidationError("Несогласованный первый запрос")
+        if self.admitted != (self.exclusion_reason is None) or (
+            self.admitted
+            and (self.admission_ms is None or self.target_end_ms is None or self.period is None)
+        ):
+            raise InputValidationError("Несогласованный календарный допуск")
+        if self.admission_ms is not None and self.admission_ms > self.last_event_ms:
             raise InputValidationError("Первый запрос позже последнего события")
         if self.target_end_ms is not None and (
             self.admission_ms is None
-            or self.last_event_ms is None
             or not self.admission_ms <= self.target_end_ms <= self.last_event_ms
         ):
             raise InputValidationError("Неверные границы целевого окна")
-        if (
-            self.close_ms is not None
-            and self.last_event_ms is not None
-            and self.close_ms < self.last_event_ms
-        ):
-            raise InputValidationError("Закрытие раньше последнего события")
 
 
 @dataclass(frozen=True, slots=True)
 class TargetRecord(Record):
     request_id: str
-    purchases: tuple[str, ...] | None
-    mature: bool
+    purchases: tuple[str, ...]
     status: OutcomeStatus
     horizon_ms: int
-    b_s: int | None
-    reason: str | None
+    reason: str | None = None
 
     def __post_init__(self) -> None:
         Record.__post_init__(self)
         require_int64(self.horizon_ms, nonnegative=True)
         if self.status == OutcomeStatus.UNKNOWN:
-            if self.purchases is not None or self.b_s is not None or not self.reason:
-                raise InputValidationError("Неизвестный исход требует null и причину")
-        elif not self.mature or self.b_s not in (0, 1) or self.purchases is None:
-            raise InputValidationError("Известный исход требует зрелость и цели")
-        if self.purchases is not None and len(self.purchases) != len(set(self.purchases)):
+            if self.purchases or not self.reason:
+                raise InputValidationError("Неизвестный исход требует пустую цель и причину")
+        elif not self.purchases or self.reason is not None:
+            raise InputValidationError("Зарегистрированная цель требует непустой набор покупок")
+        if len(self.purchases) != len(set(self.purchases)):
             raise InputValidationError("Покупки должны быть различными")
-        if self.purchases and self.b_s == 0:
-            raise InputValidationError("Покупка в целях несовместима с b_s=0")
 
 
 @dataclass(frozen=True, slots=True)

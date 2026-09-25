@@ -7,7 +7,7 @@ import hashlib
 import io
 import re
 import threading
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
@@ -206,7 +206,7 @@ def row_batches(
     batch_size: int = 1024,
     max_batch_chars: int = DEFAULT_MAX_BATCH_CHARS,
     progress: Callable[[str, int], None] | None = None,
-) -> Iterator[tuple[tuple[int, dict[str, str]], ...]]:
+) -> Generator[tuple[tuple[int, dict[str, str]], ...], None, None]:
     """Целые строки, ограниченные числом и суммой длин декодированных полей."""
     require_int64(batch_size)
     require_int64(max_batch_chars)

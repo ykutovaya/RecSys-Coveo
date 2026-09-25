@@ -83,17 +83,17 @@ def test_partial_measurements_keep_known_values():
 
 
 def test_unknown_is_not_zero():
-    unknown = TargetRecord("r", None, False, OutcomeStatus.UNKNOWN, 100, None, "immature")
+    unknown = TargetRecord("r", (), OutcomeStatus.UNKNOWN, 100, "no_registered_purchase")
     assert from_json(to_json(unknown), TargetRecord) == unknown
     with pytest.raises(InputValidationError):
-        dataclasses.replace(unknown, b_s=0)
+        dataclasses.replace(unknown, status=OutcomeStatus.KNOWN)
     with pytest.raises(InputValidationError):
-        dataclasses.replace(unknown, purchases=())
+        dataclasses.replace(unknown, purchases=("sku",))
 
 
 def test_empty_target_id_and_metric_consistency():
     with pytest.raises(InputValidationError):
-        TargetRecord("r", ("",), True, OutcomeStatus.KNOWN, 100, 1, None)
+        TargetRecord("r", ("",), OutcomeStatus.KNOWN, 100)
     with pytest.raises(InputValidationError):
         MetricResult(0.0, "passed", None, "per_1000", 1, (), None, True, ())
     with pytest.raises(InputValidationError):
@@ -102,7 +102,7 @@ def test_empty_target_id_and_metric_consistency():
 
 def test_review_counterexamples():
     with pytest.raises(InputValidationError):
-        TargetRecord("q", ("sku",), True, OutcomeStatus.KNOWN, 100, 0, None)
+        TargetRecord("q", (), OutcomeStatus.KNOWN, 100)
     with pytest.raises(InputValidationError):
         SessionEvaluation("s", None, 0, 0, 0, None, False, 0, (), "immature")
     with pytest.raises(InputValidationError):

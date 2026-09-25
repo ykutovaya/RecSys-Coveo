@@ -109,8 +109,8 @@
         "tests/reference/e1_targets_oracle.py",
         "tests/reference/e1_periods_oracle.py"
       ],
-      "coverage": "Календарный допуск и сохранение неизвестных исходов",
-      "remaining": "Расчёт зарегистрированных целей по observed_purchases_v1"
+      "coverage": "Первый запрос, зарегистрированные цели observed_purchases_v1 и календарный допуск",
+      "remaining": "Приёмка целей в полном маршруте с моделью — Э5"
     },
     "B09": {
       "test_id": "B09",
@@ -123,7 +123,7 @@
         "tests/reference/manifest_cases.py"
       ],
       "coverage": "Запрет исторической покупочной частоты в паспорте",
-      "remaining": "Нулевой признак и маска доступности в расчёте признаков — Э3"
+      "remaining": "Отсутствие столбца покупочной частоты в схеме признаков — Э3"
     },
     "B10.periods": {
       "test_id": "B10",

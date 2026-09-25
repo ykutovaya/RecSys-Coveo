@@ -18,7 +18,7 @@ CONFIG = TaskConfig(horizon_ms=20, gap_ms=10)
 
 
 def decision(t0, **kwargs):
-    values = dict(coverage_complete=True, session_complete=True, close_ms=None)
+    values = dict(last_event_ms=t0)
     values.update(kwargs)
     return admit(t0, PERIODS, CONFIG, **values)
 
@@ -36,36 +36,53 @@ def test_exact_seven_half_open_parts_and_no_split_session():
             validate_periods(parts)
 
 
-def test_strict_maturity_and_A_G_full_session():
-    assert decision(269).admitted
-    assert decision(270).reason == "maturity_boundary"
-    assert decision(271).reason == "maturity_boundary"
-    assert decision(0, close_ms=99).admitted
-    assert not decision(0, close_ms=100).admitted
-    assert not decision(0, close_ms=99, session_complete=False).admitted
-    assert not decision(0, close_ms=None).admitted
-    # Длинная B-сессия с подтверждённым целевым окном ещё может быть открыта.
-    assert decision(200, session_complete=False, close_ms=None).admitted
-    assert decision(200, coverage_complete=False).reason == "coverage_incomplete"
+@pytest.mark.parametrize("t0, allowed", [(269, True), (270, False), (271, False)])
+def test_strict_target_window_boundary(t0, allowed):
+    result = decision(t0)
+    assert result.eligible
+    assert result.admitted is allowed
+    assert result.reason == (None if allowed else "window_boundary")
+
+
+@pytest.mark.parametrize("last_event_ms, allowed", [(89, True), (90, False), (91, False)])
+def test_A_G_full_observed_tail(last_event_ms, allowed):
+    result = decision(0, last_event_ms=last_event_ms)
+    assert result.eligible
+    assert result.admitted is allowed
+    assert result.reason == (None if allowed else "late_A_G_tail")
+
+
+def test_non_A_G_admission_does_not_require_tail_within_period():
+    assert decision(200, last_event_ms=700).admitted
+
+
+def test_no_request_outside_period_and_first_request_membership():
     assert decision(None).reason == "no_request"
     assert decision(-1).reason == "outside_periods"
     assert decision(100).period == "A_N"  # Не переносится в B.
 
 
-def test_checked_times_and_explicit_proofs():
+@pytest.mark.parametrize("last_event_ms", [None, 199, True, 2**63])
+def test_last_observation_must_exist_and_not_precede_request(last_event_ms):
     with pytest.raises(InputValidationError):
-        decision(0, coverage_complete=1)
-    with pytest.raises(InputValidationError):
-        decision(200, close_ms=199)
+        decision(200, last_event_ms=last_event_ms)
+
+
+@pytest.mark.parametrize("tail_overflow", [False, True])
+def test_checked_admission_times(tail_overflow):
     distant = (*PERIODS[:-1], Period("D", 600, 2**63 - 1, 2))
+    if tail_overflow:
+        distant = tuple(
+            Period(name, 2**63 - 101 + i, 2**63 - 100 + i, 2) for i, name in enumerate(PERIOD_NAMES)
+        )
+        # Широкий A_G: окно запроса помещается, но last_event + g переполняется.
+        distant = (Period("A_G", 0, distant[1].start_ms, 2), *distant[1:])
     with pytest.raises(NumericError):
         admit(
-            2**63 - 2,
+            0 if tail_overflow else 2**63 - 2,
             distant,
             CONFIG,
-            coverage_complete=True,
-            session_complete=False,
-            close_ms=None,
+            last_event_ms=2**63 - 2,
         )
 
 

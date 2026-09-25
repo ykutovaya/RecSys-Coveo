@@ -13,6 +13,23 @@ from .common import CONTRACT_VERSION, InputValidationError, id_bytes, require_in
 T = TypeVar("T")
 
 
+def record_version(record_type: type[Any]) -> str:
+    # Версия подготовки меняется без изменения неизменённых событий и численных записей.
+    return (
+        "3"
+        if record_type.__name__
+        in {
+            "TaskConfig",
+            "PreparationPlan",
+            "PreparedRequest",
+            "ScheduleCursor",
+            "SessionRecord",
+            "TargetRecord",
+        }
+        else CONTRACT_VERSION
+    )
+
+
 def _convert(value: Any, expected: Any, *, decode: bool = False) -> Any:
     origin, args = get_origin(expected), get_args(expected)
     if origin is types.UnionType:
@@ -95,7 +112,7 @@ def to_json(record: Any) -> bytes:
     validate_record(record)
     return json.dumps(
         {
-            "contract_version": CONTRACT_VERSION,
+            "contract_version": record_version(type(record)),
             "type": type(record).__name__,
             "data": dataclasses.asdict(cast(Any, record)),
         },
@@ -119,7 +136,7 @@ def from_json(payload: bytes, record_type: type[T]) -> T:
         envelope = json.loads(payload.decode("utf-8"), object_pairs_hook=_unique_object)
         if (
             set(envelope) != {"contract_version", "type", "data"}
-            or envelope["contract_version"] != CONTRACT_VERSION
+            or envelope["contract_version"] != record_version(record_type)
             or envelope["type"] != record_type.__name__
         ):
             raise InputValidationError("Несовместимый конверт записи")
@@ -166,7 +183,7 @@ def record_schema(record_type: type[Any]) -> dict[str, Any]:
         "additionalProperties": False,
         "required": ["contract_version", "type", "data"],
         "properties": {
-            "contract_version": {"const": CONTRACT_VERSION},
+            "contract_version": {"const": record_version(record_type)},
             "type": {"const": record_type.__name__},
             "data": describe(record_type),
         },

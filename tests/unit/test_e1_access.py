@@ -19,10 +19,16 @@ def test_access_checks_period_kind_path_and_records_attempts(tmp_path, scope):
         data_role="prefix",
         code_sha256="a" * 64,
         run_id="synthetic",
-        schema_version="2",
+        schema_version="3",
         scope=scope,
         config_id="e1_code",
-        configuration={"period": "B", "dataset_kind": "prefixes"},
+        configuration={
+            "period": "B",
+            "dataset_kind": "prefixes",
+            "evaluation_protocol": "observed_purchases_v1",
+            "record_type": "PreparedRequest",
+            "admitted": True,
+        },
     )
     assert access.read(allowed, purpose="prefix") == store.read_bytes(allowed)
     for path, purpose in [
@@ -45,6 +51,33 @@ def test_access_checks_period_kind_path_and_records_attempts(tmp_path, scope):
     assert sum(v["allowed"] for v in logs) == 1
     assert len(logs) == 7
     assert all(v["scope"] == scope for v in logs)
+
+
+def test_diagnostic_cannot_be_opened_under_dataset_path(tmp_path):
+    store = LocalArtifactStore(tmp_path)
+    path = "datasets/A_G/prefixes/s.parquet"
+    store.publish_table(
+        path,
+        pa.table({"record_json": [b"test"]}),
+        data_role="prefix",
+        code_sha256="a" * 64,
+        run_id="s",
+        schema_version="3",
+        scope="actual",
+        config_id="e1_code",
+        configuration={
+            "period": "A_G",
+            "dataset_kind": "prefixes",
+            "record_type": "PreparedRequest",
+            "evaluation_protocol": "observed_purchases_v1",
+            "admitted": True,
+            "diagnostic": True,
+        },
+    )
+    with pytest.raises(InputValidationError):
+        DatasetAccess(store, code_sha256="a" * 64, run_id="s", scope="actual").read(
+            path, purpose="prefix"
+        )
 
 
 def test_failed_compatibility_is_not_logged_as_granted_access(tmp_path):

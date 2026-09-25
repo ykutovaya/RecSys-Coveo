@@ -4,7 +4,8 @@ from pathlib import PurePosixPath
 from uuid import uuid4
 
 from coveo_recsys.artifacts import LocalArtifactStore
-from coveo_recsys.contracts import CONTRACT_VERSION, InputValidationError
+from coveo_recsys.contracts import InputValidationError
+from coveo_recsys.contracts.preparation import EVALUATION_PROTOCOL, PREPARATION_VERSION
 
 
 class DatasetAccess:
@@ -53,10 +54,14 @@ class DatasetAccess:
                 or descriptor.run_id != self.run_id
                 or descriptor.code_sha256 != self.code_sha256
                 or descriptor.kind != "parquet"
-                or descriptor.schema_version != CONTRACT_VERSION
+                or descriptor.schema_version != PREPARATION_VERSION
                 or descriptor.config_id != "e1_code"
                 or descriptor.scope != self.scope
                 or descriptor.configuration.get("diagnostic", False)
+                or descriptor.configuration.get("admitted") is not True
+                or descriptor.configuration.get("evaluation_protocol") != EVALUATION_PROTOCOL
+                or descriptor.configuration.get("record_type")
+                != {"prefix": "PreparedRequest", "labels": "TargetRecord"}[purpose]
                 or descriptor.metadata.get("data_role")
                 != {"prefix": "prefix", "labels": "targets"}[purpose]
             ):

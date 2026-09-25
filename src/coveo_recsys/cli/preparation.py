@@ -1,9 +1,10 @@
-"""Подготовка Э1 и отдельная ограниченная проверка реальных сессий."""
+"""Подготовка целых сессий и зарегистрированных целей observed_purchases_v1."""
 
 import bisect
 import hashlib
 import itertools
 import json
+import sqlite3
 import tempfile
 import time
 from collections import Counter
@@ -22,10 +23,15 @@ from coveo_recsys.artifacts import (
     sha256_file,
     strict_json_loads,
 )
-from coveo_recsys.contracts import CONTRACT_VERSION, InputValidationError
-from coveo_recsys.contracts.preparation import PERIOD_NAMES, PreparationPlan, PreparedRequest
+from coveo_recsys.contracts import CONTRACT_VERSION, InputValidationError, id_bytes
+from coveo_recsys.contracts.preparation import (
+    EVALUATION_PROTOCOL,
+    PREPARATION_VERSION,
+    PreparationPlan,
+    PreparedRequest,
+)
 from coveo_recsys.contracts.records import CanonicalBlock, Record
-from coveo_recsys.contracts.serialization import from_json, record_schema, to_json
+from coveo_recsys.contracts.serialization import from_json, record_schema, record_version, to_json
 from coveo_recsys.contracts.training import SessionRecord, TargetRecord
 from coveo_recsys.data.canonical import canonicalize
 from coveo_recsys.data.io import (
@@ -36,12 +42,11 @@ from coveo_recsys.data.io import (
     row_batches,
     timestamp,
 )
-from coveo_recsys.data.periods import sample_sessions, session_key
+from coveo_recsys.data.periods import admit, session_key
 from coveo_recsys.data.schedule import make_schedule
 from coveo_recsys.data.supply import SupplyLimits, inspect_supply
 from coveo_recsys.state import empty_prefix, reduce_state
-from coveo_recsys.targets import historical_cohort, prepare_targets
-from coveo_recsys.targets.cohort import CohortRecord
+from coveo_recsys.targets import prepare_targets
 from coveo_recsys.verification.provenance import assert_source_binding, source_sha256
 
 R = TypeVar("R", bound=Record)
@@ -119,20 +124,20 @@ class Preparation:
         self._last_scan_progress = 0.0
 
     def _check_budget(self, *, force: bool = False) -> None:
-        if self.plan is None or not self.plan.diagnostic_sessions:
+        if self.plan is None:
             return
         now = time.monotonic()
         if not force and now - self._last_budget_check < 0.5:
             return
         self._last_budget_check = now
         memory = _peak_memory()["peak_process_memory_bytes"]
-        files = [(p, p.stat().st_size) for p in self.store.root.rglob("*") if p.is_file()]
-        disk = sum(size for _, size in files)
         temporary = sum(
-            size for p, size in files if any(part.startswith(".prepare-") for part in p.parts)
+            p.stat().st_size
+            for directory in self.store.root.glob(".prepare-*")
+            for p in directory.rglob("*")
+            if p.is_file()
         )
         self.temp_peak = max(self.temp_peak, temporary)
-        self.disk_peak = max(self.disk_peak, disk)
         if memory is None:
             raise InputValidationError("Нельзя проверить бюджет памяти")
         if (
@@ -189,6 +194,13 @@ class Preparation:
             self.reused_stages.append(step)
         if step != "failed":
             self._check_budget(force=True)
+        # Постоянные результаты не входят в бюджет временного диска.
+        # Их растущее дерево измеряется на стадиях, не после каждой сессии.
+        if step not in {"canonical_session", "prepared_session", "reading", "failed"}:
+            self.disk_peak = max(
+                self.disk_peak,
+                sum(p.stat().st_size for p in self.store.root.rglob("*") if p.is_file()),
+            )
         self.sequence += 1
         self.store.publish_json(
             f"preparation/progress/{self.execution_id}/{self.sequence:06}.json",
@@ -258,16 +270,38 @@ class Preparation:
                 reading["bytes"] = sum(reading["per_file_bytes"].values())
                 self._scan_progress(name, rows)
 
-            raw = inspect_supply(
-                input_dir,
-                strict_json_loads(profile_path.read_bytes()),
-                limits=SupplyLimits(
-                    batch_size=batch_size,
-                    max_batch_chars=max_batch_chars,
-                    max_seconds=self.plan.max_seconds if self.plan else 1800,
-                ),
-                progress=supply_progress,
-            )
+            if self.plan is not None:
+                hashes = self._input_hashes(input_dir)
+                checked_files = {}
+                for table, filename in FILES.items():
+                    expected = profile.expected_files[table]
+                    size = paths[table].stat().st_size
+                    if (
+                        hashes[table] != expected["expected_sha256"]
+                        or size != expected["expected_size_bytes"]
+                    ):
+                        raise InputValidationError(
+                            f"Вход не соответствует проверенной поставке: {filename}"
+                        )
+                    with closing(
+                        row_batches(
+                            paths[table],
+                            table,
+                            profile,
+                            batch_size=1,
+                            max_batch_chars=max_batch_chars,
+                        )
+                    ) as rows:
+                        next(rows, None)  # Заголовок; полный проход поведения/поиска — при отборе.
+                    checked_files[filename] = dict(sha256=hashes[table], size_bytes=size, rows=None)
+                raw = {"files": checked_files}
+            else:
+                raw = inspect_supply(
+                    input_dir,
+                    strict_json_loads(profile_path.read_bytes()),
+                    limits=SupplyLimits(batch_size=batch_size, max_batch_chars=max_batch_chars),
+                    progress=supply_progress,
+                )
             reading.update(complete=True, seconds=time.monotonic() - started)
             catalog = {
                 "schema_version": "1",
@@ -310,7 +344,7 @@ class Preparation:
         )
         self.progress(
             "inspected",
-            input_rows=sum(item["rows"] for item in catalog["files"].values()),
+            input_rows=sum(item["rows"] or 0 for item in catalog["files"].values()),
             input_bytes=catalog["disk_plan"]["input_bytes"],
         )
         self._verify_current(input_dir, profile_path)
@@ -361,7 +395,7 @@ class Preparation:
             self.store.publish_json(
                 schema_path,
                 record_schema(record_type),
-                schema_version=CONTRACT_VERSION,
+                schema_version=record_version(record_type),
                 **self.common,
             )
         )
@@ -374,7 +408,7 @@ class Preparation:
             data_role=role,
             inputs=self.inputs,
             configuration={**configuration, "record_type": record_type.__name__},
-            schema_version=CONTRACT_VERSION,
+            schema_version=record_version(record_type),
             artifact_dependencies={**dependencies, schema.path: schema.descriptor_sha256},
             **self.common,
         )
@@ -384,7 +418,7 @@ class Preparation:
         descriptor = self.store.describe(path)
         if (
             descriptor.inputs != self.inputs
-            or descriptor.schema_version != CONTRACT_VERSION
+            or descriptor.schema_version != record_version(record_type)
             or descriptor.configuration.get("record_type") != record_type.__name__
         ):
             raise InputValidationError("Набор не соответствует входам или типу записи")
@@ -447,8 +481,8 @@ class Preparation:
             key: self.artifacts[key] for key in ("inputs/catalog.json", "inputs/plan.json")
         }
         if session_ids is not None:
-            dependencies["preparation/technical_selection.json"] = self.artifacts[
-                "preparation/technical_selection.json"
+            dependencies["preparation/selection.json"] = self.artifacts[
+                "preparation/selection.json"
             ]
         with tempfile.TemporaryDirectory(prefix=".prepare-", dir=self.store.root) as temporary:
             with closing(
@@ -476,6 +510,12 @@ class Preparation:
                         if len(rows) >= plan.max_session_blocks or size > plan.max_session_bytes:
                             raise InputValidationError("Полная сессия превышает объявленный бюджет")
                         rows.append(block)
+                    row_counts = Counter(
+                        origin.split(":", 1)[0]
+                        for block in rows
+                        for event in block.events
+                        for origin in event.origins
+                    )
                     key = sha256_bytes(
                         json.dumps([namespace, session_id], ensure_ascii=False).encode("utf-8")
                     )
@@ -494,6 +534,7 @@ class Preparation:
                             "path": table_path,
                             "blocks": len(rows),
                             "encoded_bytes": size,
+                            "source_rows": dict(row_counts),
                         }
                     )
                     self.progress(
@@ -519,7 +560,7 @@ class Preparation:
         )
         return index
 
-    def _technical_selection(
+    def _select_sessions(
         self,
         input_dir: Path,
         profile_path: Path,
@@ -527,76 +568,175 @@ class Preparation:
         *,
         batch_size: int,
         max_batch_chars: int,
-    ) -> tuple[str, ...]:
-        """Минимальные хеши наблюдаемых ID, не нормативная выборка допущенных A_G."""
-        path = "preparation/technical_selection.json"
+    ) -> dict[str, Any]:
+        """Полный проход кратких сведений; SQLite ограничивает память, не совокупность."""
+        path = "preparation/selection.json"
         if (self.store.root / path).exists():
             descriptor = self.store.verify_compatible(
                 path,
                 expected_inputs=self.inputs,
                 expected_code_sha256=self.code,
-                expected_schema_version=CONTRACT_VERSION,
+                expected_schema_version=PREPARATION_VERSION,
                 expected_configuration={},
             )
             self._verify_tree(path, descriptor.descriptor_sha256)
-            self.progress("technical_selection_reused")
-            return tuple(strict_json_loads(self.store.read_bytes(path))["session_ids"])
-        profile, period = load_profile(profile_path), plan.periods[0]
-        chosen: list[tuple[tuple[bytes, bytes], str]] = []
-        seen: set[str] = set()
-        for table in ("browsing", "search"):
-            started = time.monotonic()
-            reading: dict[str, Any] = dict(
-                purpose="technical_id_selection", table=table, bytes=None, complete=False
-            )
-            self.reads.append(reading)
-            rows = 0
-            for batch in row_batches(
-                input_dir / FILES[table],
-                table,
-                profile,
-                batch_size=batch_size,
-                max_batch_chars=max_batch_chars,
-                progress=self._scan_progress,
-            ):
-                for _, row in batch:
-                    rows += 1
-                    if not period.start_ms <= timestamp(row["timestamp"]) < period.end_ms:
-                        continue
-                    sid = row["session_id"]
-                    if sid in seen:
-                        continue
-                    key = session_key(sid, plan.seed)
-                    if len(chosen) == plan.diagnostic_sessions and key >= chosen[-1][0]:
-                        continue
-                    bisect.insort(chosen, (key, sid))
-                    seen.add(sid)
-                    if len(chosen) > plan.diagnostic_sessions:
-                        seen.remove(chosen.pop()[1])
-            reading.update(
-                complete=True,
-                rows=rows,
-                bytes=(input_dir / FILES[table]).stat().st_size,
-                seconds=time.monotonic() - started,
-            )
-        result = tuple(sid for _, sid in chosen)
+            self.progress("selection_reused")
+            return dict(strict_json_loads(self.store.read_bytes(path)))
+        profile = load_profile(profile_path)
+        chosen: dict[str, list[tuple[tuple[bytes, bytes], str]]] = {
+            p.name: [] for p in plan.periods
+        }
+        selected_rows: dict[str, dict[str, Any]] = {}
+        counts = {p.name: {"eligible": 0, "admitted": 0, "selected": 0} for p in plan.periods}
+        exclusions: Counter[str] = Counter()
+        examples: list[dict[str, Any]] = []
+        considered = 0
+        # Временная БД не является контрольной точкой: после прерывания проход повторяется.
+        with tempfile.TemporaryDirectory(prefix=".prepare-", dir=self.store.root) as temporary:
+            with closing(sqlite3.connect(Path(temporary) / "sessions.sqlite")) as db:
+                db.execute("PRAGMA journal_mode=OFF")
+                db.execute("PRAGMA cache_size=-16384")
+                db.execute(
+                    "CREATE TABLE sessions (sid TEXT PRIMARY KEY, detail INTEGER, purchase INTEGER, last INTEGER NOT NULL, browsing INTEGER NOT NULL, search INTEGER NOT NULL) WITHOUT ROWID"
+                )
+                insert = """INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(sid) DO UPDATE SET
+                    detail=CASE WHEN detail IS NULL THEN excluded.detail WHEN excluded.detail IS NULL THEN detail ELSE min(detail,excluded.detail) END,
+                    purchase=CASE WHEN purchase IS NULL THEN excluded.purchase WHEN excluded.purchase IS NULL THEN purchase ELSE min(purchase,excluded.purchase) END,
+                    last=max(last,excluded.last), browsing=browsing+excluded.browsing,
+                    search=search+excluded.search"""
+                for table in ("browsing", "search"):
+                    started = time.monotonic()
+                    reading: dict[str, Any] = dict(
+                        purpose="session_admission", table=table, bytes=None, complete=False
+                    )
+                    self.reads.append(reading)
+                    rows = 0
+                    for batch in row_batches(
+                        input_dir / FILES[table],
+                        table,
+                        profile,
+                        batch_size=batch_size,
+                        max_batch_chars=max_batch_chars,
+                        progress=self._scan_progress,
+                    ):
+                        values = []
+                        for _, row in batch:
+                            sid, time_ms = row["session_id"], timestamp(row["timestamp"])
+                            id_bytes(sid)
+                            action = row.get("action", "")
+                            if table == "browsing":
+                                if action not in {
+                                    "",
+                                    "page",
+                                    "detail",
+                                    "add",
+                                    "remove",
+                                    "purchase",
+                                }:
+                                    raise InputValidationError("Неизвестное товарное действие")
+                                if action in {"detail", "add", "remove", "purchase"}:
+                                    id_bytes(row["sku"])
+                                if profile.scope == "actual" and (
+                                    row["event_type"] not in profile.event_types
+                                    or action not in profile.actions
+                                ):
+                                    raise InputValidationError(
+                                        "Несовместимый тип или действие поведения"
+                                    )
+                            values.append(
+                                (
+                                    sid,
+                                    time_ms if action == "detail" else None,
+                                    time_ms if action == "purchase" else None,
+                                    time_ms,
+                                    int(table == "browsing"),
+                                    int(table == "search"),
+                                )
+                            )
+                        db.executemany(insert, values)
+                        rows += len(batch)
+                        self._check_budget()
+                    db.commit()
+                    reading.update(
+                        complete=True,
+                        rows=rows,
+                        bytes=(input_dir / FILES[table]).stat().st_size,
+                        seconds=time.monotonic() - started,
+                    )
+                for sid, detail, purchase, last, browsing, search in db.execute(
+                    "SELECT * FROM sessions"
+                ):
+                    considered += 1
+                    first = (
+                        detail
+                        if detail is not None and (purchase is None or detail < purchase)
+                        else None
+                    )
+                    admission = admit(first, plan.periods, plan.task, last_event_ms=last)
+                    if admission.period:
+                        counts[admission.period]["eligible"] += int(admission.eligible)
+                        counts[admission.period]["admitted"] += int(admission.admitted)
+                    if admission.reason:
+                        exclusions[admission.reason] += 1
+                        if len(examples) < 16:
+                            examples.append(
+                                dict(
+                                    session_id=sid,
+                                    reason=admission.reason,
+                                    first_request_ms=first,
+                                    last_event_ms=last,
+                                )
+                            )
+                    if admission.admitted and admission.period is not None:
+                        period = next(p for p in plan.periods if p.name == admission.period)
+                        candidates = chosen[period.name]
+                        if period.sample_size:
+                            key = session_key(sid, plan.seed)
+                            if len(candidates) < period.sample_size or key < candidates[-1][0]:
+                                bisect.insort(candidates, (key, sid))
+                                selected_rows[sid] = dict(
+                                    first_request_ms=first,
+                                    last_event_ms=last,
+                                    source_rows={
+                                        FILES["browsing"]: browsing,
+                                        FILES["search"]: search,
+                                    },
+                                )
+                                if len(candidates) > period.sample_size:
+                                    selected_rows.pop(candidates.pop()[1])
+                    if considered % 4096 == 0:
+                        self._check_budget()
+                self._check_budget(force=True)
+        selection = {name: [sid for _, sid in candidates] for name, candidates in chosen.items()}
+        for name, count in counts.items():
+            count["selected"] = len(selection[name])
+        result = dict(
+            selection=selection,
+            selected_rows=selected_rows,
+            considered_sessions=considered,
+            exclusions=dict(exclusions),
+            exclusion_examples=examples,
+            period_counts=counts,
+            evaluation_protocol=EVALUATION_PROTOCOL,
+            rule="lowest_seeded_hash_after_calendar_admission",
+            normative_sample=True,
+        )
         self._remember(
             self.store.publish_json(
                 path,
-                {
-                    "session_ids": result,
-                    "rule": "lowest_seeded_hash_of_ids_with_any_row_in_A_G",
-                    "normative_sample": False,
-                },
+                result,
                 inputs=self.inputs,
-                schema_version=CONTRACT_VERSION,
+                schema_version=PREPARATION_VERSION,
                 artifact_dependencies={
                     key: self.artifacts[key] for key in ("inputs/catalog.json", "inputs/plan.json")
                 },
                 **self.common,
             )
         )
-        self.progress("technical_selection_complete", sessions=len(result))
+        self.progress(
+            "selection_complete", sessions=len(selected_rows), considered_sessions=considered
+        )
         return result
 
     @staticmethod
@@ -631,15 +771,20 @@ class Preparation:
                 )
             self._check_budget(force=True)
         except (Exception, KeyboardInterrupt) as exc:
-            if self.plan is not None and self.plan.diagnostic_sessions:
+            if self.plan is not None:
                 self._execution("interrupted" if isinstance(exc, KeyboardInterrupt) else "failed")
             raise
-        if self.plan is not None and self.plan.diagnostic_sessions:
-            report = {**report, "status": "prepared_diagnostic", **self._execution("completed")}
+        report = {**report, "status": "prepared", **self._execution("completed")}
         return report
 
     def _execution(self, status: str) -> dict[str, Any]:
         """Успех отмечается только после заключительной проверки входов и бюджета."""
+        result_bytes = result_files = 0
+        for result_path in self.store.root.rglob("*"):
+            if result_path.is_file():
+                result_bytes += result_path.stat().st_size
+                result_files += 1
+        self.disk_peak = max(self.disk_peak, result_bytes)
         measurements = {
             "status": status,
             "elapsed_seconds": time.monotonic() - self.started,
@@ -650,10 +795,9 @@ class Preparation:
             "reused_stages": self.reused_stages,
             "temporary_peak_bytes": self.temp_peak,
             "run_disk_peak_bytes": self.disk_peak,
-            "result_bytes_before_measurement": sum(
-                p.stat().st_size for p in self.store.root.rglob("*") if p.is_file()
-            ),
-            "disk_measurement": "at CSV batches, sorting writes/merges and stages; result includes copies/logs",
+            "result_bytes_before_measurement": result_bytes,
+            "result_files_before_measurement": result_files,
+            "disk_measurement": "temporary: CSV batches, sorting writes/merges and stages; run: stages and completion only, not continuous peak; result includes copies/logs",
         }
         path = f"preparation/executions/{self.execution_id}.json"
         dependencies = (
@@ -689,6 +833,12 @@ class Preparation:
         self.common["scope"] = plan.scope
         self._check_budget(force=True)
         profile = load_profile(profile_path)
+        if plan.diagnostic_sessions:
+            raise InputValidationError(
+                "Технический режим не является подготовкой observed_purchases_v1"
+            )
+        if plan.scope == "actual" and any(p.sample_size for p in plan.periods[1:]):
+            raise InputValidationError("До Э2 реальная подготовка ограничена A_G")
         if (
             plan.source_namespace != profile.namespace
             or plan.task.query_dimension != profile.dimensions["query"]
@@ -707,7 +857,7 @@ class Preparation:
                 content,
                 kind="json",
                 inputs=self.inputs,
-                schema_version=CONTRACT_VERSION,
+                schema_version=PREPARATION_VERSION,
                 **self.common,
             )
         )
@@ -717,7 +867,7 @@ class Preparation:
                 report_path,
                 expected_inputs=self.inputs,
                 expected_code_sha256=self.code,
-                expected_schema_version=CONTRACT_VERSION,
+                expected_schema_version=PREPARATION_VERSION,
                 expected_configuration={},
             )
             self._verify_tree(report_path, descriptor.descriptor_sha256)
@@ -726,31 +876,45 @@ class Preparation:
             self._verify_current(input_dir, profile_path, plan_path)
             return {**report, "report_path": report_path, "report_sha256": descriptor.sha256}
 
-        technical_selection = (
-            self._technical_selection(
-                input_dir,
-                profile_path,
-                plan,
-                batch_size=batch_size,
-                max_batch_chars=max_batch_chars,
-            )
-            if plan.diagnostic_sessions
-            else None
+        sampled = self._select_sessions(
+            input_dir,
+            profile_path,
+            plan,
+            batch_size=batch_size,
+            max_batch_chars=max_batch_chars,
         )
+        selection = sampled["selection"]
+        selected = frozenset(sid for values in selection.values() for sid in values)
         index = self._canonical(
             input_dir,
             profile_path,
             plan,
             batch_size=batch_size,
             max_batch_chars=max_batch_chars,
-            session_ids=frozenset(technical_selection) if technical_selection is not None else None,
+            session_ids=selected,
         )
+        if {item["session_id"] for item in index} != selected:
+            raise InputValidationError("Потеряны выбранные сессии")
         sessions: list[SessionRecord] = []
         for item in index:
             blocks = self._records(item["path"], CanonicalBlock)
             session, _ = prepare_targets(
                 blocks, self._requests(blocks, plan), plan.coverage, plan.periods, plan.task
             )
+            expected = sampled["selected_rows"][session.session_id]
+            if (
+                not session.admitted
+                or session.session_id not in selection[session.period]
+                or session.admission_ms != expected["first_request_ms"]
+                or session.last_event_ms != expected["last_event_ms"]
+                or any(
+                    item["source_rows"].get(name, 0) != n
+                    for name, n in expected["source_rows"].items()
+                )
+            ):
+                raise InputValidationError(
+                    "Отбор и полный журнал сессии не совпадают; потеря исходных строк"
+                )
             sessions.append(session)
         parent = {"canonical/index.json": self.artifacts["canonical/index.json"]}
         self._table(
@@ -760,43 +924,47 @@ class Preparation:
             configuration={},
             dependencies=parent,
         )
-        selection = {
-            p.name: sample_sessions(
-                (
-                    s.session_id
-                    for s in sessions
-                    if s.period == p.name
-                    and s.exclusion_reason is None
-                    and not plan.diagnostic_sessions
-                ),
-                p.sample_size,
-                seed=plan.seed,
-                max_sessions=plan.max_sessions,
-            )
-            for p in plan.periods
-        }
-        self._remember(
-            self.store.publish_json(
-                "preparation/selection.json",
-                selection,
-                inputs=self.inputs,
-                schema_version=CONTRACT_VERSION,
-                artifact_dependencies={
-                    "preparation/sessions.parquet": self.artifacts["preparation/sessions.parquet"]
-                },
-                **self.common,
-            )
-        )
-        selected = {sid for values in selection.values() for sid in values}
         datasets: list[dict[str, Any]] = []
-        diagnostic_datasets: list[dict[str, Any]] = []
+        positives = 0
+        raw_rows: Counter[str] = Counter()
+        product_skus: set[str] = set()
+        event_counts: Counter[str] = Counter()
+        session_counts: Counter[str] = Counter()
+        sku_sessions: dict[str, Counter[str]] = {"detail": Counter(), "purchase": Counter()}
+        repeated_detail_pairs = target_purchase_events = 0
+        target_skus: set[str] = set()
+        target_sizes: Counter[int] = Counter()
         for item, session in zip(index, sessions, strict=True):
-            if session.session_id not in selected and not plan.diagnostic_sessions:
-                continue
             blocks = self._records(item["path"], CanonicalBlock)
             requests = self._requests(blocks, plan)
             _, targets = prepare_targets(blocks, requests, plan.coverage, plan.periods, plan.task)
-            base = "diagnostic/A_G" if plan.diagnostic_sessions else f"datasets/{session.period}"
+            positives += int(any(target.purchases for target in targets))
+            raw_rows.update(item["source_rows"])
+            actions: dict[str, Counter[str]] = {"detail": Counter(), "purchase": Counter()}
+            for block in blocks:
+                for event in block.events:
+                    if event.sku is None:
+                        continue
+                    if event.event_type in {"detail", "add", "remove", "purchase"}:
+                        product_skus.add(event.sku)
+                    if event.event_type in actions:
+                        actions[event.event_type][event.sku] += 1
+                    if (
+                        event.event_type == "purchase"
+                        and session.admission_ms is not None
+                        and session.target_end_ms is not None
+                        and session.admission_ms < block.event_time_ms <= session.target_end_ms
+                    ):
+                        target_purchase_events += 1
+            for kind, occurrences in actions.items():
+                event_counts[kind] += occurrences.total()
+                session_counts[kind] += bool(occurrences)
+                sku_sessions[kind].update(occurrences.keys())
+            repeated_detail_pairs += sum(n >= 2 for n in actions["detail"].values())
+            for target in targets:
+                target_sizes[len(target.purchases)] += 1
+                target_skus.update(target.purchases)
+            base = f"datasets/{session.period}"
             prefix_path, target_path = (
                 f"{base}/{kind}/{item['key']}.parquet" for kind in ("prefixes", "targets")
             )
@@ -813,7 +981,9 @@ class Preparation:
                 configuration={
                     "period": session.period,
                     "dataset_kind": "prefixes",
-                    "diagnostic": bool(plan.diagnostic_sessions),
+                    "diagnostic": False,
+                    "admitted": True,
+                    "evaluation_protocol": EVALUATION_PROTOCOL,
                 },
             )
             self._table(
@@ -825,65 +995,86 @@ class Preparation:
                 configuration={
                     "period": session.period,
                     "dataset_kind": "targets",
-                    "diagnostic": bool(plan.diagnostic_sessions),
+                    "diagnostic": False,
+                    "admitted": True,
+                    "evaluation_protocol": EVALUATION_PROTOCOL,
                 },
             )
-            cohort_path = None
-            if session.period == "A_G" and not plan.diagnostic_sessions:
-                cohort_path = f"cohort/A_G/{item['key']}.parquet"
-                self._table(
-                    cohort_path,
-                    historical_cohort(blocks, session, plan.coverage, plan.periods, plan.task),
-                    CohortRecord,
-                    dependencies=dependencies,
-                    configuration={"period": "A_G"},
-                )
-            destination = diagnostic_datasets if plan.diagnostic_sessions else datasets
-            destination.append(
+            datasets.append(
                 dict(
                     period=session.period,
                     session_id=session.session_id,
                     canonical_path=item["path"],
                     prefixes=prefix_path,
                     targets=target_path,
-                    cohort=cohort_path,
                     requests=len(requests),
                 )
             )
-            self.progress("prepared_session", sessions=len(destination), requests=len(requests))
-        counts = {}
-        for period in PERIOD_NAMES:
-            eligible = sum(s.period == period for s in sessions)
-            admitted = sum(s.period == period and s.exclusion_reason is None for s in sessions)
-            counts[period] = dict(
-                eligible=eligible,
-                admitted=admitted,
-                selected=len(selection[period]),
-                retention=admitted / eligible if eligible else None,
-                retention_reason=None if eligible else "empty_denominator",
-            )
+            self.progress("prepared_session", sessions=len(datasets), requests=len(requests))
+        counts = sampled["period_counts"]
         self._verify_current(input_dir, profile_path, plan_path)
         report = dict(
-            status="diagnostic_materialized" if plan.diagnostic_sessions else "prepared",
+            status="materialized",
             scope=plan.scope,
-            evidence_scope="actual_diagnostic" if plan.scope == "actual" else "synthetic_code",
+            evidence_scope="actual_preparation" if plan.scope == "actual" else "synthetic_code",
             run_id=self.run_id,
             real_preflight=False,
-            contract_version=CONTRACT_VERSION,
+            contract_version=PREPARATION_VERSION,
+            evaluation_protocol=EVALUATION_PROTOCOL,
+            telemetry_complete=None,
             source_sha256=self.code,
             inputs=self.inputs,
             canonical_sessions=len(index),
             canonical_blocks=sum(item["blocks"] for item in index),
-            request_count=sum(item["requests"] for item in datasets + diagnostic_datasets),
+            request_count=sum(item["requests"] for item in datasets),
+            N_eligible=sum(counts[p.name]["eligible"] for p in plan.periods if p.sample_size),
+            N_admitted=sum(counts[p.name]["admitted"] for p in plan.periods if p.sample_size),
+            N_obs=len(sessions),
+            N_plus=positives,
+            selection_shortfalls={
+                p.name: {
+                    "requested": p.sample_size,
+                    "admitted": counts[p.name]["admitted"],
+                    "selected": len(selection[p.name]),
+                    "reason": "fewer_admitted_sessions",
+                }
+                for p in plan.periods
+                if counts[p.name]["admitted"] < p.sample_size
+            },
+            composition={
+                "event_semantics": plan.task.event_semantics,
+                "source_rows": {
+                    FILES[kind]: raw_rows[FILES[kind]] for kind in ("browsing", "search")
+                },
+                "product_skus": len(product_skus),
+                **{
+                    kind: {
+                        "events": event_counts[kind],
+                        "sessions": session_counts[kind],
+                        "skus": len(frequencies),
+                        "skus_in_at_least_2_sessions": sum(n >= 2 for n in frequencies.values()),
+                        "skus_in_at_least_3_sessions": sum(n >= 3 for n in frequencies.values()),
+                    }
+                    for kind, frequencies in sku_sessions.items()
+                },
+                "repeated_detail_session_sku_pairs": repeated_detail_pairs,
+                "target_window": {
+                    "purchase_events": target_purchase_events,
+                    "skus": len(target_skus),
+                    "sessions_by_target_size": {
+                        str(n): count for n, count in sorted(target_sizes.items())
+                    },
+                },
+            },
             selection=selection,
-            exclusions=dict(Counter(s.exclusion_reason for s in sessions if s.exclusion_reason)),
+            exclusions=sampled["exclusions"],
+            exclusion_examples=sampled["exclusion_examples"],
+            considered_sessions=sampled["considered_sessions"],
             period_counts=counts,
             datasets=datasets,
-            diagnostic_datasets=diagnostic_datasets,
-            technical_selection=technical_selection,
             artifacts=dict(self.artifacts),
             limitations=[
-                "Техническая выборка не заменяет нормативный отбор и подтверждение покрытия",
+                "Полнота телеметрии неизвестна; пустая цель не является отрицательным исходом",
                 "Каталог I_G и кандидаты ещё не построены",
                 "Локальное разделение наборов не заменяет рабочие права Э6",
                 "Малый прогон не подтверждает масштабируемость полной подготовки",
@@ -893,7 +1084,7 @@ class Preparation:
             report_path,
             report,
             inputs=self.inputs,
-            schema_version=CONTRACT_VERSION,
+            schema_version=PREPARATION_VERSION,
             artifact_dependencies=self.artifacts,
             **self.common,
         )

@@ -7,15 +7,13 @@ from tests.unit.test_e1_periods import CONFIG, PERIODS
 
 
 @seed(17)
-@given(st.integers(0, 699), st.booleans(), st.booleans(), st.integers(0, 99))
-def test_admission_matches_independent_formula(t0, coverage, complete, delta):
-    close = t0 + delta
+@given(st.integers(0, 699), st.integers(0, 199))
+def test_admission_matches_independent_formula(t0, delta):
+    last_event_ms = t0 + delta
     period = PERIODS[t0 // 100]
-    result = admit(
-        t0, PERIODS, CONFIG, coverage_complete=coverage, session_complete=complete, close_ms=close
-    )
+    result = admit(t0, PERIODS, CONFIG, last_event_ms=last_event_ms)
     assert result.eligible
-    assert result.admitted == admitted(t0, period, 20, 10, coverage, complete, close)
+    assert result.admitted == admitted(t0, period, 20, 10, last_event_ms)
 
 
 @seed(17)

@@ -9,10 +9,9 @@ def key(identifier, seed=17):
     return hashlib.sha256(struct.pack(">QQ", seed, len(raw)) + raw).digest(), raw
 
 
-def admitted(t0, period, horizon, gap, coverage, complete, close):
+def admitted(t0, period, horizon, gap, last_event_ms):
     return (
         period.start_ms <= t0 < period.end_ms
         and t0 + horizon + gap < period.end_ms
-        and coverage
-        and (period.name != "A_G" or (complete and close is not None and close < period.end_ms))
+        and (period.name != "A_G" or last_event_ms + gap < period.end_ms)
     )

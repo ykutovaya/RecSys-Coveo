@@ -166,7 +166,7 @@ def test_latest_unavailable_search_never_restores_older_context():
     assert states[1].search.payload.vector == (1.0, 0.0)
     assert states[2].search.payload == SearchPayload(None, "vector_absent")
     assert states[3].search == states[2].search
-    assert [request.t_q for request in make_schedule(states, TaskConfig())] == [0, 1, 2]
+    assert [request.t_q for request in make_schedule(states, TaskConfig())] == [0]
 
 
 def test_search_results_and_clicks_cannot_change_computational_context(tmp_path):
@@ -192,7 +192,7 @@ def test_search_results_and_clicks_cannot_change_computational_context(tmp_path)
         searches = list(iter_events(path, "search", profile, batch_size=1))
         origins.append(tuple(event.provenance for event in searches))
         detail = RawEvent(
-            profile.namespace, "s", "detail", 0, 0, EventType.DETAIL, "A", None, "fixture:detail"
+            profile.namespace, "s", "detail", 3, 3, EventType.DETAIL, "A", None, "fixture:detail"
         )
         blocks = list(canonicalize([detail, *searches], temp_dir=tmp_path, chunk_size=1))
         state = empty_prefix(profile.namespace, "s", TaskConfig())
@@ -220,7 +220,7 @@ def test_search_results_and_clicks_cannot_change_computational_context(tmp_path)
         prepared.append(tuple(comparable))
     assert origins[0] != origins[1]
     assert prepared[0] == prepared[1]
-    assert [request.t_q for request in prepared[0]] == [0, 1, 2]
+    assert [request.t_q for request in prepared[0]] == [3]
     assert prepared[0][-1].prefix.search.payload.reason == "vector_absent"
 
 
@@ -261,7 +261,7 @@ def test_two_clocks_full_blocks_and_immutable_old_slice():
         reduce_state(old, delayed, TaskConfig())
 
 
-def test_request_boundaries_one_per_block_and_stop_after_purchase():
+def test_only_first_detail_block_generates_request_with_whole_block():
     config = TaskConfig(horizon_ms=10)
     values = [
         block(-1, [("search", None)]),
@@ -275,8 +275,9 @@ def test_request_boundaries_one_per_block_and_stop_after_purchase():
     ]
     states = prefixes(values, config)
     requests = make_schedule(states, config)
-    assert [request.t_q for request in requests] == [0, 9, 10]
-    assert [request.ordinal for request in requests] == [1, 2, 3]
+    assert [request.t_q for request in requests] == [0]
+    assert [request.ordinal for request in requests] == [1]
+    assert requests[0].prefix.blocks[-1] == values[1]
     assert ("detail", "D", 1) in states[-1].counters
     assert all(not hasattr(request, "catalog_sha256") for request in requests)
     assert make_schedule(states, config) == requests
@@ -298,7 +299,7 @@ def test_stop_limit_keeps_processing_later_events():
     values += [block(12, [("purchase", "B")]), block(13, [("detail", "C")])]
     states = prefixes(values)
     requests = make_schedule(iter(states), TaskConfig())
-    assert len(requests) == 10 and states[-1].version == 14
+    assert len(requests) == 1 and states[-1].version == 14
     assert states[-1].purchased_skus == ("B",)
 
 

@@ -6,20 +6,25 @@ from .common import InputValidationError, id_bytes
 from .records import PrefixSnapshot, Record
 
 PERIOD_NAMES = ("A_G", "A_N", "B", "C_smoke", "C_select", "E", "D")
+PREPARATION_VERSION = "3"
+EVALUATION_PROTOCOL = "observed_purchases_v1"
 
 
 @dataclass(frozen=True, slots=True)
 class TaskConfig(Record):
     horizon_ms: int = 86_400_000
     gap_ms: int = 1_800_000
-    max_requests: int = 10
+    max_requests: int = 1
     detail_history_limit: int = 20
     block_history_limit: int = 20
     query_dimension: int = 2
     event_semantics: str = "set_v1"
+    evaluation_protocol: str = EVALUATION_PROTOCOL
 
     def __post_init__(self) -> None:
         Record.__post_init__(self)
+        if self.max_requests != 1 or self.evaluation_protocol != EVALUATION_PROTOCOL:
+            raise InputValidationError("observed_purchases_v1 требует ровно один первый запрос")
         if min(
             self.horizon_ms,
             self.gap_ms,
@@ -48,7 +53,7 @@ class PreparedRequest(Record):
     def __post_init__(self) -> None:
         Record.__post_init__(self)
         if (
-            self.ordinal <= 0
+            self.ordinal != 1
             or self.prefix.session_id != self.session_id
             or self.prefix.event_cutoff_ms != self.t_q
             or self.prefix.availability_cutoff_ms != self.a_q
@@ -71,7 +76,7 @@ class ScheduleCursor(Record):
     def __post_init__(self) -> None:
         Record.__post_init__(self)
         id_bytes(self.source_namespace)
-        if self.request_count < 0 or (self.request_count == 0) != (
+        if self.request_count not in (0, 1) or (self.request_count == 0) != (
             self.first_request_time_ms is None
         ):
             raise InputValidationError("Несогласованный курсор расписания")
@@ -79,11 +84,7 @@ class ScheduleCursor(Record):
 
 @dataclass(frozen=True, slots=True)
 class Coverage(Record):
-    """Покрытие/разрывы [start,end); confirmed_at — доступность свидетельства.
-
-    В историческом a=t закрытие вычисляется как last+g, не как confirmed_at.
-    Отсутствие confirmed_at означает неподтверждённое покрытие.
-    """
+    """Метаданные наблюдаемого диапазона; не условие допуска зарегистрированных целей."""
 
     source_namespace: str
     start_ms: int
@@ -145,12 +146,8 @@ class PreparationPlan(Record):
         id_bytes(self.source_namespace)
         if self.scope not in {"synthetic", "actual"} or self.seed != 17:
             raise InputValidationError("Неверная область плана или seed != 17")
-        if not 0 <= self.diagnostic_sessions <= self.max_sessions or (
-            self.scope == "actual" and self.diagnostic_sessions == 0
-        ):
-            raise InputValidationError(
-                "Реальная подготовка требует ограниченной технической выборки"
-            )
+        if not 0 <= self.diagnostic_sessions <= self.max_sessions:
+            raise InputValidationError("Неверный размер технической выборки")
         if self.coverage.source_namespace != self.source_namespace:
             raise InputValidationError("Покрытие относится к другому пространству источника")
         if tuple(p.name for p in self.periods) != PERIOD_NAMES or any(

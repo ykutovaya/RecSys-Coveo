@@ -18,6 +18,8 @@ from coveo_recsys.contracts.training import SessionRecord
 
 def test_preparation_configuration_roundtrip():
     config = TaskConfig()
+    assert config.max_requests == 1
+    assert config.evaluation_protocol == "observed_purchases_v1"
     assert from_json(to_json(config), TaskConfig) == config
     assert not {"catalog_sha256", "b_s", "session_request_count", "targets", "mature"} & {
         item.name for item in fields(PreparedRequest)
@@ -29,6 +31,8 @@ def test_preparation_configuration_roundtrip():
     [
         {"horizon_ms": True},
         {"max_requests": 0},
+        {"max_requests": 2},
+        {"evaluation_protocol": "legacy"},
         {"query_dimension": -1},
         {"event_semantics": "unknown"},
     ],
@@ -58,23 +62,27 @@ def test_cart_and_maturity_invariants():
     with pytest.raises(InputValidationError):
         CartItem("A", CartState.UNKNOWN, 2, 2)
     assert CartItem("A", CartState.UNKNOWN, 2, 1).last_unambiguous_ms == 1
-    with pytest.raises(InputValidationError):
-        SessionRecord("s", 0, None, False, "A_G", True, None, source_namespace="n")
-    with pytest.raises(InputValidationError):
-        SessionRecord("s", None, None, False, None, False, "no_request", source_namespace="")
-    # Зрелое окно B не требует, чтобы вся длинная сессия уже закрылась.
-    assert SessionRecord(
+    session = SessionRecord(
         "s",
         0,
-        None,
-        True,
         "B",
         True,
         None,
         source_namespace="n",
         last_event_ms=200,
         target_end_ms=100,
-    ).mature
+        request_count=1,
+    )
+    assert session.telemetry_complete is None and session.admitted
+    for changes in (
+        {"telemetry_complete": True},
+        {"admission_ms": None},
+        {"request_count": 2},
+        {"target_end_ms": 201},
+        {"exclusion_reason": "excluded"},
+    ):
+        with pytest.raises(InputValidationError):
+            replace(session, **changes)
 
 
 def test_contradictory_canonical_and_prefix_records_rejected():
@@ -105,8 +113,6 @@ def test_contradictory_canonical_and_prefix_records_rejected():
         SessionRecord(
             "s",
             10,
-            0,
-            True,
             "B",
             True,
             None,
@@ -120,8 +126,11 @@ def test_versioned_preparation_plan():
     path = Path(__file__).resolve().parents[2] / "configs/synthetic_preparation.json"
     plan = from_json(path.read_bytes(), PreparationPlan)
     assert from_json(to_json(plan), PreparationPlan) == plan
+    assert replace(plan, scope="actual", diagnostic_sessions=0).scope == "actual"
+    old = to_json(plan).replace(b'"contract_version":"3"', b'"contract_version":"2"')
+    with pytest.raises(InputValidationError):
+        from_json(old, PreparationPlan)
     for changes in (
-        {"scope": "actual"},
         {"seed": 18},
         {"periods": plan.periods[:-1]},
         {"max_sessions": 0},

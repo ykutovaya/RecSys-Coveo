@@ -1,5 +1,5 @@
 {
-  "contract_version": "2",
+  "contract_version": "3",
   "type": "PreparationPlan",
   "data": {
     "scope": "actual",
@@ -7,14 +7,15 @@
     "task": {
       "horizon_ms": 86400000,
       "gap_ms": 1800000,
-      "max_requests": 10,
+      "max_requests": 1,
       "detail_history_limit": 20,
       "block_history_limit": 20,
       "query_dimension": 50,
-      "event_semantics": "set_v1"
+      "event_semantics": "set_v1",
+      "evaluation_protocol": "observed_purchases_v1"
     },
     "periods": [
-      {"name": "A_G", "start_ms": 1548028800000, "end_ms": 1549238400000, "sample_size": 64},
+      {"name": "A_G", "start_ms": 1548028800000, "end_ms": 1549238400000, "sample_size": 10000},
       {"name": "A_N", "start_ms": 1549238400000, "end_ms": 1550448000000, "sample_size": 0},
       {"name": "B", "start_ms": 1550448000000, "end_ms": 1551657600000, "sample_size": 0},
       {"name": "C_smoke", "start_ms": 1551657600000, "end_ms": 1552262400000, "sample_size": 0},
@@ -38,10 +39,10 @@
     "max_group_bytes": 4194304,
     "max_session_blocks": 10000,
     "max_session_bytes": 8388608,
-    "max_sessions": 64,
-    "diagnostic_sessions": 64,
-    "max_seconds": 1800,
-    "max_memory_bytes": 536870912,
-    "max_temp_bytes": 268435456
+    "max_sessions": 10000,
+    "diagnostic_sessions": 0,
+    "max_seconds": 7200,
+    "max_memory_bytes": 1073741824,
+    "max_temp_bytes": 2147483648
   }
 }

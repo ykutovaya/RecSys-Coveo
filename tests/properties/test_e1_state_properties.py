@@ -81,7 +81,6 @@ def state_cases(draw):
         detail_history_limit=draw(st.integers(1, 8)),
         block_history_limit=draw(st.integers(1, 8)),
         horizon_ms=draw(st.integers(1, 30)),
-        max_requests=draw(st.integers(1, 10)),
     )
     blocks = []
     for time in times:

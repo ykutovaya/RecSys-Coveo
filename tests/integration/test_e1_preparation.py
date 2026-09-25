@@ -18,7 +18,6 @@ from coveo_recsys.contracts.serialization import from_json, to_json
 from coveo_recsys.contracts.training import SessionRecord, TargetRecord
 from coveo_recsys.data.access import DatasetAccess
 from coveo_recsys.data.io import FILES
-from coveo_recsys.targets import CohortRecord
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests/fixtures/e1"
@@ -78,7 +77,6 @@ def dataset_records(store, report):
             records(store, dataset["canonical_path"], CanonicalBlock),
             records(store, dataset["prefixes"], PreparedRequest),
             records(store, dataset["targets"], TargetRecord),
-            records(store, dataset["cohort"], CohortRecord) if dataset["cohort"] else (),
         )
     return result
 
@@ -147,9 +145,9 @@ def test_cli_inspect_then_prepare_has_exact_fixture_results(tmp_path, capsys):
     assert result["status"] == "prepared" and result["scope"] == "synthetic"
     assert result["real_preflight"] is False
     assert (result["canonical_sessions"], result["canonical_blocks"], result["request_count"]) == (
-        3,
-        9,
-        4,
+        2,
+        8,
+        2,
     )
     assert result["selection"]["A_G"] == ["s1", "s2"]
     assert all(result["selection"][name] == [] for name in PERIOD_NAMES[1:])
@@ -158,7 +156,12 @@ def test_cli_inspect_then_prepare_has_exact_fixture_results(tmp_path, capsys):
     store = LocalArtifactStore(run_dir)
     stored = json.loads(store.read_bytes(REPORT))
     assert stored == {
-        key: value for key, value in result.items() if key not in {"report_path", "report_sha256"}
+        **{
+            key: value
+            for key, value in result.items()
+            if key not in {"report_path", "report_sha256", "status", "execution", "execution_path"}
+        },
+        "status": "materialized",
     }
     assert result["report_sha256"] == store.describe(REPORT).sha256
     for path, digest in result["artifacts"].items():
@@ -170,37 +173,35 @@ def test_cli_inspect_then_prepare_has_exact_fixture_results(tmp_path, capsys):
     assert {
         row["session_id"]: len(records(store, row["path"], CanonicalBlock))
         for row in canonical_index
-    } == {"s1": 5, "s2": 3, "s3": 1}
+    } == {"s1": 5, "s2": 3}
     sessions = {
         row.session_id: row for row in records(store, "preparation/sessions.parquet", SessionRecord)
     }
-    assert set(sessions) == {"s1", "s2", "s3"}
+    assert set(sessions) == {"s1", "s2"}
     for session_id, last in [("s1", 5000), ("s2", 4000)]:
         session = sessions[session_id]
         assert (
             session.admission_ms,
             session.last_event_ms,
             session.target_end_ms,
-            session.close_ms,
             session.request_count,
-        ) == (1000, last, last, last + 1_800_000, 2)
-        assert session.mature and session.coverage_complete and session.exclusion_reason is None
-    assert (
-        sessions["s3"].admission_ms is sessions["s3"].target_end_ms is sessions["s3"].period is None
-    )
-    assert not sessions["s3"].mature and sessions["s3"].request_count == 0
-    assert sessions["s3"].exclusion_reason == "no_request"
+        ) == (1000, last, last, 1)
+        assert (
+            session.admitted
+            and session.telemetry_complete is None
+            and session.exclusion_reason is None
+        )
 
     prepared = dataset_records(store, result)
     assert set(prepared) == {("A_G", "s1"), ("A_G", "s2")}
-    for (_, session_id), (blocks, requests, targets, cohort) in prepared.items():
+    for (_, session_id), (blocks, requests, targets) in prepared.items():
         assert len(blocks) == (5 if session_id == "s1" else 3)
-        assert [request.t_q for request in requests] == [1000, 3000]
-        assert [request.ordinal for request in requests] == [1, 2]
+        assert [request.t_q for request in requests] == [1000]
+        assert [request.ordinal for request in requests] == [1]
         assert {target.request_id for target in targets} == {
             request.request_id for request in requests
         }
-        assert len(targets) == len(requests) == 2
+        assert len(targets) == len(requests) == 1
         for request in requests:
             assert_prefix_only(request)
             assert request.prefix.first_event_time_ms == 1000
@@ -212,24 +213,12 @@ def test_cli_inspect_then_prepare_has_exact_fixture_results(tmp_path, capsys):
             )
         assert requests[0].prefix.counters == (("detail", "A", 1),)
         assert requests[0].prefix.search is None and not requests[0].prefix.cart
-        assert requests[1].prefix.search.payload.vector == (
-            (1.0, 0.0) if session_id == "s1" else (0.0, 1.0)
-        )
         for target in targets:
-            assert target.mature and target.status.value == "known"
+            assert target.status.value == ("known" if session_id == "s1" else "unknown")
             assert target.horizon_ms == 86_400_000
             assert target.purchases == (("B",) if session_id == "s1" else ())
-            assert target.b_s == int(session_id == "s1")
-            assert target.reason == (None if session_id == "s1" else "no_future_purchase")
-        expected_pairs = [("A", 1000)] + ([("C", 5000)] if session_id == "s1" else [])
-        assert [(record.sku, record.anchor_ms) for record in cohort] == expected_pairs
-        assert all(
-            record.mature
-            and record.purchased == 0
-            and record.target_end_ms == record.anchor_ms + 86_400_000
-            and record.reason == "no_purchase_in_anchor_window"
-            for record in cohort
-        )
+            assert target.reason == (None if session_id == "s1" else "no_registered_purchase")
+    assert not (run_dir / "cohort").exists()
 
 
 def test_batch_and_external_sort_chunk_sizes_do_not_change_records(tmp_path, capsys):
@@ -265,10 +254,14 @@ def test_compatible_repeat_preserves_artifact_identity(tmp_path, capsys):
     first = invoke(capsys, values)
     store = LocalArtifactStore(tmp_path / "run")
     before = descriptor_hashes(store)
-    assert invoke(capsys, values) == first
+    repeated = invoke(capsys, values)
+    assert repeated["report_sha256"] == first["report_sha256"]
     after = descriptor_hashes(store)
     assert all(after[path] == digest for path, digest in before.items())
-    assert all(path.startswith("preparation/progress/") for path in after.keys() - before.keys())
+    assert all(
+        path.startswith(("preparation/progress/", "preparation/executions/"))
+        for path in after.keys() - before.keys()
+    )
 
 
 def test_rejected_nested_inspect_preserves_outer_report_dependencies(tmp_path, monkeypatch):
@@ -332,7 +325,7 @@ def test_resume_after_report_failure_reuses_completed_artifacts(tmp_path, capsys
     resumed = invoke(capsys, values)
     assert resumed["status"] == "prepared"
     assert all(store.describe(path).descriptor_sha256 == digest for path, digest in before.items())
-    assert resumed["request_count"] == 4
+    assert resumed["request_count"] == 2
 
 
 @pytest.mark.parametrize("mutation", ["input", "plan", "code", "artifact"])
@@ -487,7 +480,7 @@ def test_seven_period_datasets_enforce_purpose_and_log_direct_path_attempts(tmp_
     for period, dataset in datasets.items():
         assert result["selection"][period] == [f"s_{period}"]
         assert dataset["requests"] == 1
-        assert bool(dataset["cohort"]) == (period == "A_G")
+        assert "cohort" not in dataset
         for kind, purpose in [("prefixes", "prefix"), ("targets", "labels")]:
             path = dataset[kind]
             if period in {"A_G", "B", "C_smoke"}:

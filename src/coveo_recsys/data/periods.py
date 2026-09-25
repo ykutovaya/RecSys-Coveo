@@ -1,6 +1,7 @@
 """Принадлежность целой сессии, допуск и отбор без чтения покупок."""
 
 import hashlib
+import heapq
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
@@ -37,35 +38,24 @@ def admit(
     periods: Sequence[Period],
     config: TaskConfig,
     *,
-    coverage_complete: bool,
-    session_complete: bool,
-    close_ms: int | None,
+    last_event_ms: int | None,
 ) -> Admission:
-    """Свидетельства вычисляет targets; покупка на решение не влияет.
-
-    coverage_complete относится к окну до t0+H+g; session_complete — ко всей
-    сессии и подтверждению её конца. Последнее дополнительно требуется A_G.
-    """
-    if type(coverage_complete) is not bool or type(session_complete) is not bool:
-        raise InputValidationError("Полнота должна быть явным логическим значением")
-    if close_ms is not None:
-        require_int64(close_ms)
-        if first_request_ms is not None and close_ms < first_request_ms:
-            raise InputValidationError("Закрытие раньше первого запроса")
+    """Допуск по календарю и опубликованному хвосту, независимо от покупок и покрытия."""
     period = period_for(first_request_ms, periods)
     if first_request_ms is None:
         return Admission(None, False, False, "no_request")
+    if last_event_ms is None:
+        raise InputValidationError("Не указано последнее наблюдаемое событие")
+    require_int64(last_event_ms)
+    if last_event_ms < first_request_ms:
+        raise InputValidationError("Последнее наблюдаемое событие раньше первого запроса")
     if period is None:
         return Admission(None, False, False, "outside_periods")
     boundary = checked_add(checked_add(first_request_ms, config.horizon_ms), config.gap_ms)
     if boundary >= period.end_ms:
-        return Admission(period.name, True, False, "maturity_boundary")
-    if not coverage_complete:
-        return Admission(period.name, True, False, "coverage_incomplete")
-    if period.name == "A_G" and (
-        not session_complete or close_ms is None or close_ms >= period.end_ms
-    ):
-        return Admission(period.name, True, False, "session_not_closed_in_A_G")
+        return Admission(period.name, True, False, "window_boundary")
+    if period.name == "A_G" and checked_add(last_event_ms, config.gap_ms) >= period.end_ms:
+        return Admission(period.name, True, False, "late_A_G_tail")
     return Admission(period.name, True, True, None)
 
 
@@ -94,4 +84,4 @@ def sample_sessions(
         seen.add(identifier)
         if len(seen) > max_sessions:
             raise InputValidationError("Число сессий превысило объявленный предел")
-    return tuple(sorted(seen, key=lambda s: session_key(s, seed))[:n])
+    return tuple(heapq.nsmallest(n, seen, key=lambda s: session_key(s, seed)))
