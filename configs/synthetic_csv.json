@@ -1,0 +1,13 @@
+{
+  "schema_version": "1",
+  "scope": "synthetic",
+  "source_namespace": "synthetic",
+  "columns": {
+    "browsing": {"session_id": "session_id", "event_id": "event_id", "timestamp": "server_timestamp_epoch_ms", "action": "product_action", "sku": "sku"},
+    "search": {"session_id": "session_id", "event_id": "event_id", "timestamp": "server_timestamp_epoch_ms", "query": "query_vector", "results": "product_skus_hash", "clicks": "clicked_skus_hash"},
+    "products": {"sku": "sku", "description": "description_vector", "image": "image_vector", "category": "category", "price_bucket": "price_bucket"}
+  },
+  "dimensions": {"query": 2, "description": 2, "image": 3},
+  "max_field_chars": 1048576,
+  "max_row_chars": 4194304
+}

@@ -1,0 +1,42 @@
+{
+  "schema_version": "coveo_supply_v1",
+  "scope": "actual",
+  "release": "1.0.0",
+  "source_url": "https://github.com/coveooss/SIGIR-ecom-data-challenge",
+  "encoding": "utf-8",
+  "delimiter": ",",
+  "quotechar": "\"",
+  "header_policy": "exact_order",
+  "timestamp_unit": "epoch_ms_utc",
+  "timestamp_shifted_whole_weeks": true,
+  "event_type_values": ["event_product", "pageview"],
+  "product_action_values": ["", "detail", "add", "purchase", "remove"],
+  "price_bucket": "integral_decimal_or_int",
+  "search_list_format": "python_single_quoted_string_list",
+  "vector_format": "json_finite_numeric_array",
+  "dimensions": {
+    "query_vector": 50,
+    "description_vector": 50,
+    "image_vector": 50
+  },
+  "query_description_compatibility": "publisher_statement",
+  "delivery_event_id": "not_present",
+  "coverage_confirmed": false,
+  "files": {
+    "browsing_train.csv": {
+      "columns": ["session_id_hash", "event_type", "product_action", "product_sku_hash", "server_timestamp_epoch_ms", "hashed_url"],
+      "expected_size_bytes": 6373830531,
+      "expected_sha256": "b0c16bf53aade25ef77c2bec32a8989d8da4784c8bec7f0750c7216a810b0b2d"
+    },
+    "search_train.csv": {
+      "columns": ["session_id_hash", "query_vector", "clicked_skus_hash", "product_skus_hash", "server_timestamp_epoch_ms"],
+      "expected_size_bytes": 1726188096,
+      "expected_sha256": "de4cae3b11e8d8a0694713b6bb6b0bb1f7063ced2ea4624a0da3910407d98b3a"
+    },
+    "sku_to_content.csv": {
+      "columns": ["product_sku_hash", "description_vector", "category_hash", "image_vector", "price_bucket"],
+      "expected_size_bytes": 74128511,
+      "expected_sha256": "f2cad127bb88efddc575e9caabbb5906355696de8544a29c767b705e53134746"
+    }
+  }
+}

@@ -1,12 +1,14 @@
 {
-  "manifest_version": "2.7",
+  "manifest_version": "2.8",
   "status": "template_not_runnable",
   "scope": "offline_first_run",
   "freeze": {
-    "preflight_passed": false,
-    "selection_plan_frozen": false,
-    "final_evaluation_plan_frozen": false,
-    "hash_storage": "detached_sha256_sidecar_over_exact_utf8_bytes"
+    "plan_references": {
+      "before_C_select": null,
+      "before_E": null,
+      "before_D": null,
+      "before_AB": null
+    }
   },
   "dataset": {
     "version": null,
@@ -427,14 +429,14 @@
       "negative_sampling_probability_dtype": "float64",
       "negative_sampling_support_check": "cdf_fp64_grid53_v1",
       "negative_sampling_support_required_by_stage": "preflight",
-      "negative_sampling_probability_rtol": 1e-6,
+      "negative_sampling_probability_rtol": 0.000001,
       "negative_sampling_allowed_mass": "direct_kahan_fp64_utf8",
       "negative_sampling_precision_failure": "negative_sampling_precision_unsupported",
       "search_dropout_draw_rule": "one_random_per_batch_request_when_p_S_positive_including_missing_search",
       "sid_random_codes_method": "choice_capacity_size_catalog_without_replacement_shuffle_true",
       "sid_random_codes_capacity_rule": "catalog_size<=capacity<=2^63-1",
       "disabled_random_consumers_advance_stream": false,
-      "sequence_layer_norm_epsilon": 1e-5,
+      "sequence_layer_norm_epsilon": 0.00001,
       "initialization_contract": "sec:modern-training-recipe",
       "batch_size": 64,
       "epochs": 3,
@@ -535,7 +537,6 @@
   },
   "verification": {
     "contract": "app:tests-normative",
-    "required_test_registry_sha256": null,
     "property_case_count": 1000,
     "seed": 17,
     "data_status": "not_run",
@@ -544,7 +545,6 @@
     "offline_status": "not_run",
     "serve_status": "not_run",
     "business_status": "not_observed",
-    "test_registry": null,
     "results_by_stage": {
       "preflight": null,
       "post_training": null,
@@ -559,38 +559,6 @@
   "stage": "preflight",
   "stage_validation": {
     "contract": "app:run-stages",
-    "ordered_stages": [
-      "preflight",
-      "post_training",
-      "post_load",
-      "pre_selection",
-      "pre_D",
-      "post_D",
-      "pre_AB",
-      "post_AB"
-    ],
-    "test_registration_fields": [
-      "test_id",
-      "scope",
-      "enabled_when",
-      "input_or_recipe_sha256",
-      "reference_calculation_sha256",
-      "absolute_tolerance",
-      "relative_tolerance",
-      "random_seed",
-      "required_by_stage"
-    ],
-    "test_result_fields": [
-      "test_id",
-      "status",
-      "reason",
-      "result_artifact_sha256"
-    ],
-    "registration_required_before_execution": true,
-    "actual_result_required_at_or_after_registered_stage": true,
-    "future_actual_result_hash_required": false,
-    "disabled_module_requires_not_used_reason": true,
-    "result_presence_is_not_test_success": true,
     "primary_estimate_required_fields": {
       "single_policy": [
         "inference.primary_policy_config_id",
