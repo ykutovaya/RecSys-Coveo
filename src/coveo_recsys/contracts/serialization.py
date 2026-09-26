@@ -27,6 +27,7 @@ def record_version(record_type: type[Any]) -> str:
             "TargetRecord",
             "CandidateResult",
             "SourceEvidence",
+            "SupervisionRecord",
         }
         else CONTRACT_VERSION
     )

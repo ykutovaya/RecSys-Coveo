@@ -17,14 +17,16 @@ def test_implemented_checks_keep_partial_coverage_and_existing_test_paths():
         "B03.data",
         "B04.graph",
         "B05.content",
-        "B05.numerics",
         "B05.features",
+        "B05.numerics",
+        "B05.ranker",
         "B06",
         "B07.retrieval",
         "B08.retrieval",
         "B09",
         "B10.periods",
         "B10.features",
+        "B10.ranker",
         "B13.preparation",
     }
     for check in checks.values():
@@ -34,17 +36,17 @@ def test_implemented_checks_keep_partial_coverage_and_existing_test_paths():
     for name in (
         "B02.context",
         "B03.data",
-        "B05.numerics",
-        "B05.content",
         "B06",
         "B09",
         "B10.periods",
         "B01.features",
         "B02.features",
-        "B05.features",
         "B07.retrieval",
         "B08.retrieval",
         "B10.features",
+        "B10.ranker",
     ):
         assert checks[name]["complete_test"] is False
         assert checks[name]["remaining"]
+    for name in ("B05.numerics", "B05.content", "B05.features", "B05.ranker"):
+        assert checks[name]["complete_test"] is True

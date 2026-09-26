@@ -74,10 +74,15 @@ class SupervisionRecord(Record):
 
     def __post_init__(self) -> None:
         Record.__post_init__(self)
-        if self.session_request_count <= 0 or any(y not in (0, 1) for y in self.labels):
+        if self.session_request_count != 1 or any(y not in (0, 1) for y in self.labels):
             raise InputValidationError("Неверные метки или число запросов")
-        if self.session_weight < 0 or any(w < 0 for w in self.pair_weights):
-            raise InputValidationError("Отрицательный обучающий вес")
+        pairs = sum(self.labels) * (len(self.labels) - sum(self.labels))
+        if (
+            self.session_weight != 1.0
+            or len(self.pair_weights) != pairs
+            or any(w != 1.0 / max(1, pairs) for w in self.pair_weights)
+        ):
+            raise InputValidationError("Веса не соответствуют observed_purchases_v1")
 
 
 @dataclass(frozen=True, slots=True)

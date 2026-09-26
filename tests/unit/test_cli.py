@@ -122,13 +122,13 @@ def test_manifest_command_rejects_invalid_json_before_validation(tmp_path, capsy
 def test_redirected_cli_output_is_utf8(tmp_path):
     environment = dict(os.environ, PYTHONIOENCODING="cp1251")
     unsupported = subprocess.run(
-        [sys.executable, "-m", "coveo_recsys", "train"],
+        [sys.executable, "-m", "coveo_recsys", "serve"],
         capture_output=True,
         encoding="utf-8",
         env=environment,
     )
     assert unsupported.returncode == 2
-    assert "Команда train ещё не реализована" in unsupported.stderr
+    assert "Команда serve ещё не реализована" in unsupported.stderr
     invalid = subprocess.run(
         [
             sys.executable,
@@ -149,3 +149,19 @@ def test_redirected_cli_output_is_utf8(tmp_path):
     report = json.loads(invalid.stdout)
     assert report["status"] == "failed"
     assert any("а" <= char <= "я" for char in report["message"].lower())
+
+
+def test_train_ranker_parser_has_explicit_inputs():
+    args = _parser().parse_args(
+        [
+            "train",
+            "ranker",
+            "--config",
+            "training.json",
+            "--run-dir",
+            "runs/example",
+            "--run-id",
+            "example",
+        ]
+    )
+    assert args.action == "ranker" and args.config.name == "training.json"

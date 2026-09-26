@@ -57,11 +57,29 @@
     "B05.features": {
       "test_id": "B05",
       "part": "features",
-      "complete_test": false,
+      "complete_test": true,
       "paths": ["tests/unit/test_e3_features.py", "tests/properties/test_e3_features_properties.py", "tests/integration/test_e3_context.py"],
       "reference_paths": ["tests/reference/e3_features_oracle.py"],
       "coverage": "Все 93 столбца, маски, кратности, нулевые группы; совпадение пакетного и последовательного расчётов",
-      "remaining": "Производные и LightGBM — Э4"
+      "remaining": "Повтор применимых проверок на фактическом обучении Э4-08"
+    },
+    "B05.ranker": {
+      "test_id": "B05",
+      "part": "ranker",
+      "complete_test": true,
+      "paths": ["tests/unit/test_e4_objective.py", "tests/unit/test_e4_boundaries.py", "tests/properties/test_e4_objective_properties.py", "tests/unit/test_e4_library.py", "tests/integration/test_e4_training.py", "tests/integration/test_e4_pipeline.py", "tests/integration/test_e4_model_io.py", "tests/integration/test_e4_publication.py"],
+      "reference_paths": ["tests/reference/e4_objective_oracle.py", "tests/reference/e4_cases.py"],
+      "coverage": "B05 активной базы: прямые пары, фиксированные разности, FP64/FP32, нулевые группы, числовое и групповое категориальное дерево LightGBM, сохранение модели",
+      "remaining": "Э4-08: применение принятого кода к фактическому B; это не post_training Coveo"
+    },
+    "B10.ranker": {
+      "test_id": "B10",
+      "part": "ranker",
+      "complete_test": false,
+      "paths": ["tests/unit/test_e4_table.py", "tests/properties/test_e4_table_properties.py", "tests/unit/test_e4_admission.py", "tests/unit/test_e4_architecture.py", "tests/integration/test_e4_integrity.py"],
+      "reference_paths": ["tests/reference/e4_table_oracle.py", "tests/reference/manifest_cases.py"],
+      "coverage": "Группы только из B, отдельные цели, отсутствие влияния закрытых периодов, фактический валидатор до доступа к B и привязки запуска",
+      "remaining": "Фактический Э1-10/Э4-08; B10.metadata и выбор — Э5"
     },
     "B07.retrieval": {
       "test_id": "B07",
@@ -88,7 +106,7 @@
       "paths": ["tests/unit/test_e3_boundaries.py", "tests/integration/test_e3_pipeline.py", "tests/integration/test_e3_integrity.py"],
       "reference_paths": ["tests/reference/e3_features_oracle.py"],
       "coverage": "Признаки не читают цели и закрытые периоды; реальный B запрещён до Э1-10, несовместимые пакеты и повторы отвергаются",
-      "remaining": "Ранжировщик и вариант без метаданных"
+      "remaining": "Фактический допуск Э1-10 и вариант без метаданных; ранжировщик покрыт B10.ranker"
     },
     "B04.graph": {
       "test_id": "B04",
@@ -106,14 +124,14 @@
     "B05.content": {
       "test_id": "B05",
       "part": "content",
-      "complete_test": false,
+      "complete_test": true,
       "paths": [
         "tests/unit/test_e2_content.py",
         "tests/properties/test_e2_content_properties.py"
       ],
       "reference_paths": ["tests/reference/e2_content_oracle.py"],
       "coverage": "Раздельные модальности, маски, словарь A_G и порядковая цена",
-      "remaining": "Производные и LightGBM Э4"
+      "remaining": "Повтор применимых проверок на фактическом обучении Э4-08"
     },
     "B01.data": {
       "test_id": "B01",
@@ -259,7 +277,7 @@
     "B05.numerics": {
       "test_id": "B05",
       "part": "numerics",
-      "complete_test": false,
+      "complete_test": true,
       "paths": [
         "tests/unit/test_numerics.py",
         "tests/properties/test_numerics_properties.py"
@@ -268,7 +286,7 @@
         "tests/reference/numerics_oracle.py"
       ],
       "coverage": "Общие устойчивые численные примитивы и внешние векторы",
-      "remaining": "Признаки — Э3; собственные производные и деревья — Э4"
+      "remaining": "Повтор применимых проверок на фактическом обучении Э4-08"
     }
   }
 }

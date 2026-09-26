@@ -1,4 +1,4 @@
-"""Пакетный путь Э3 на тестовых наборах; реальные B закрыты до Э1-10."""
+"""Пакетные признаки B; фактические данные требуют допуска Э1-10."""
 
 import time
 from collections.abc import Callable
@@ -63,7 +63,7 @@ def run_features(
     if (
         not isinstance(settings, dict)
         or not required <= set(settings)
-        or set(settings) - required - {"metadata_path"}
+        or set(settings) - required - {"metadata_path", "admission"}
         or not run_id
     ):
         raise InputValidationError("Неверные настройки признаков")
@@ -78,11 +78,6 @@ def run_features(
         raise InputValidationError("Нужны закреплённые входы Э3")
     source = (project_root / prep["path"]).resolve()
     prepared = read_report(source, report_sha256=prep["report_sha256"], verify_tables=False)
-    # Scope берётся из проверенной сводки, не из флага командной строки.
-    if prepared["scope"] != "synthetic":
-        raise InputValidationError(
-            "Реальный B закрыт до Э1-10; Э3 пока исполняет только тестовые наборы"
-        )
     historical_root = (project_root / history["path"]).resolve()
     destination = run_dir.resolve()
     if any(
@@ -95,10 +90,8 @@ def run_features(
     started = time.monotonic()
     historical_store = LocalArtifactStore(historical_root)
     head = historical_store.describe(PACKAGE_PATH)
-    if head.sha256 != history["package_sha256"] or head.scope != "synthetic":
-        raise InputValidationError("Неверный хеш или область исторического пакета")
-    package = load_historical(historical_store)
-    catalog_hash = historical_store.describe("historical/catalog.parquet").sha256
+    if head.sha256 != history["package_sha256"]:
+        raise InputValidationError("Неверный хеш исторического пакета")
     schema_path = project_root / settings["feature_schema"]
     schema_bytes = schema_path.read_bytes()
     schema = strict_json_loads(schema_bytes)
@@ -108,11 +101,28 @@ def run_features(
     if "quotas" in configuration:
         configuration["quotas"] = tuple(configuration["quotas"])
     config = RetrievalConfig(**configuration)
+    from coveo_recsys.cli.admission import require_training_admission
+    from coveo_recsys.config.resources import resource_bytes
+
+    def admission() -> str | None:
+        return require_training_admission(
+            project_root,
+            settings.get("admission"),
+            prepared=prepared,
+            historical=head,
+            feature_schema_bytes=schema_bytes,
+            recipe=strict_json_loads(resource_bytes("configs/ranker_recipe.json")),
+            retrieval=asdict(config),
+        )
+
+    manifest_hash = admission()
+    package = load_historical(historical_store)
+    catalog_hash = historical_store.describe("historical/catalog.parquet").sha256
     store = LocalArtifactStore(destination)
     identity = {
         "format_version": "features_v1",
         "run_id": run_id,
-        "scope": "synthetic",
+        "scope": prepared["scope"],
         "period": period,
         "source_sha256": code,
         "settings_sha256": sha256_bytes(settings_bytes),
@@ -124,6 +134,7 @@ def run_features(
         "catalog_sha256": catalog_hash,
         "feature_schema_file_sha256": sha256_bytes(schema_bytes),
         "configuration": asdict(config),
+        "manifest_sha256": manifest_hash,
     }
     identity_bytes = canonical_json_bytes(identity)
     identity = strict_json_loads(identity_bytes)
@@ -151,6 +162,8 @@ def run_features(
             and sha256_file(metadata_path) != package.input_hashes["metadata_sha256"]
         ):
             raise InputValidationError("Поставка метаданных изменилась")
+        if admission() != manifest_hash:
+            raise InputValidationError("Допуск изменился")
 
     def output_tables_unchanged(tables: dict[str, Any]) -> None:
         for path, kind in TABLES.items():
@@ -184,7 +197,7 @@ def run_features(
         source,
         code_sha256=prepared["source_sha256"],
         run_id=prepared["run_id"],
-        scope="synthetic",
+        scope=prepared["scope"],
         audit=audit.append,
     )
 

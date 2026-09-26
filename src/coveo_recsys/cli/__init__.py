@@ -1,4 +1,4 @@
-"""Подготовка, исторический пакет и признаки; обучение ещё не реализовано."""
+"""Подготовка, исторический пакет, признаки и обучение ранжировщика."""
 
 import argparse
 import json
@@ -81,8 +81,13 @@ def _parser() -> argparse.ArgumentParser:
     feature_build.add_argument("--run-dir", type=Path, required=True)
     feature_build.add_argument("--run-id", required=True)
     feature_build.add_argument("--period", choices=("B",), required=True)
+    train = commands.add_parser("train", help="Обучение ранжировщика")
+    train_actions = train.add_subparsers(dest="action", required=True)
+    ranker = train_actions.add_parser("ranker")
+    ranker.add_argument("--config", type=Path, required=True)
+    ranker.add_argument("--run-dir", type=Path, required=True)
+    ranker.add_argument("--run-id", required=True)
     for name in (
-        "train",
         "replay",
         "select",
         "evaluate",
@@ -128,10 +133,24 @@ def main(argv: list[str] | None = None) -> int:
             reconfigure(encoding="utf-8")
     parser = _parser()
     args = parser.parse_args(argv)
-    if args.command not in {"environment", "manifest", "data", "historical", "features"}:
+    if args.command not in {"environment", "manifest", "data", "historical", "features", "train"}:
         print(f"Команда {args.command} ещё не реализована", file=sys.stderr)
         return 2
     try:
+        if args.command == "train":
+            from contextlib import redirect_stdout
+
+            from coveo_recsys.cli.training import run_training
+
+            try:
+                # LightGBM сообщает ход обучения в stdout; JSON команды остаётся отдельным.
+                with redirect_stdout(sys.stderr):
+                    result = run_training(args.project_root, args.config, args.run_dir, args.run_id)
+            except KeyboardInterrupt:
+                _emit({"status": "failed", "reason": "interrupted"})
+                return 130
+            _emit(result)
+            return 0 if result["status"] == "completed" else 1
         if args.command == "environment":
             from coveo_recsys.environment import environment_report
 
