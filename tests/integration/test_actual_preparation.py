@@ -16,6 +16,7 @@ from coveo_recsys.contracts.serialization import from_json, to_json
 from coveo_recsys.contracts.training import SessionRecord, TargetRecord
 from coveo_recsys.data.access import DatasetAccess
 from coveo_recsys.data.periods import session_key
+from coveo_recsys.data.prepared import iter_sessions, read_report
 
 ROOT = Path(__file__).resolve().parents[2]
 REPORT = "reports/preparation.json"
@@ -77,7 +78,22 @@ def run(inputs, destination, *, batch_size=1):
 
 
 def records(store, path, kind):
-    return tuple(from_json(v, kind) for v in store.read_table(path)["record_json"].to_pylist())
+    return tuple(record for _, rows in iter_sessions(store.root / path, kind) for record in rows)
+
+
+def test_preparation_uses_only_common_tables_and_no_session_artifacts(actual_inputs, tmp_path):
+    destination = tmp_path / "run"
+    result = run(actual_inputs, destination)
+    assert {p.relative_to(destination).as_posix() for p in destination.rglob("*.parquet")} == {
+        "canonical/A_G.parquet",
+        "datasets/A_G/prefixes.parquet",
+        "datasets/A_G/targets.parquet",
+        "preparation/sessions.parquet",
+    }
+    assert not (destination / ".objects").exists()
+    assert not (destination / "preparation/progress").exists()
+    assert not list(destination.rglob("*.artifact.*"))
+    assert {"datasets", "artifacts"}.isdisjoint(result)
 
 
 def test_actual_selection_uses_admission_and_keeps_unknown_empty_targets(
@@ -102,16 +118,23 @@ def test_actual_selection_uses_admission_and_keeps_unknown_empty_targets(
     sessions = records(store, "preparation/sessions.parquet", SessionRecord)
     assert result["request_count"] == sum(s.request_count for s in sessions) > 0
     assert all(s.admitted and s.telemetry_complete is None for s in sessions)
-    blocks, targets = [], []
+    blocks = records(store, "canonical/A_G.parquet", CanonicalBlock)
+    targets = records(store, "datasets/A_G/targets.parquet", TargetRecord)
+    requests = records(store, "datasets/A_G/prefixes.parquet", PreparedRequest)
     access = DatasetAccess(
-        store, code_sha256=result["source_sha256"], run_id="actual-test", scope="actual"
+        store.root, code_sha256=result["source_sha256"], run_id="actual-test", scope="actual"
     )
-    for dataset in result["datasets"]:
-        blocks.extend(records(store, dataset["canonical_path"], CanonicalBlock))
-        targets.extend(records(store, dataset["targets"], TargetRecord))
-        requests = records(store, dataset["prefixes"], PreparedRequest)
-        assert len(requests) == dataset["requests"]
-        assert access.read(dataset["targets"], purpose="labels")
+    assert len(requests) == result["request_count"]
+    assert (
+        tuple(
+            row
+            for _, rows in access.read(
+                "datasets/A_G/targets.parquet", TargetRecord, purpose="labels"
+            )
+            for row in rows
+        )
+        == targets
+    )
     assert all(b.session_id != excluded for b in blocks), "Поздний хвост исключает всю сессию"
     assert len(targets) == result["request_count"]
     assert sorted(t.purchases for t in targets) == [(), ("sku-b", "sku-c")]
@@ -120,10 +143,7 @@ def test_actual_selection_uses_admission_and_keeps_unknown_empty_targets(
     assert result["composition"]["detail"]["sessions"] == 2
     assert result["composition"]["target_window"]["sessions_by_target_size"] == {"0": 1, "2": 1}
     assert not (destination / "diagnostic").exists() and not (destination / "cohort").exists()
-    assert all(
-        store.describe(p.relative_to(destination).as_posix()[:-14]).scope == "actual"
-        for p in destination.rglob("*.artifact.json")
-    )
+    assert read_report(destination)["status"] == "completed"
 
 
 def test_composition_counts_canonical_actions_sessions_and_target_window(actual_inputs, tmp_path):
@@ -221,6 +241,21 @@ def test_frequent_budget_checks_scan_only_temporary_files(tmp_path, monkeypatch,
         preparation.progress(step, sessions=2)
 
 
+def test_temporary_budget_includes_report_before_publication(tmp_path):
+    preparation = Preparation(LocalArtifactStore(tmp_path / "run"), ROOT, "budget-test")
+    plan = from_json((ROOT / "configs/synthetic_preparation.json").read_bytes(), PreparationPlan)
+    preparation.plan = replace(plan, max_temp_bytes=10)
+    temporary = preparation.store.root / "reports/.preparation.json.test.tmp"
+    temporary.parent.mkdir()
+    temporary.write_bytes(b"0123456789")
+    preparation._check_budget(force=True)
+    assert preparation.temp_peak == 10
+    temporary.write_bytes(b"01234567890")
+    with pytest.raises(InputValidationError, match="бюджет"):
+        preparation._check_budget(force=True)
+    assert not (preparation.store.root / REPORT).exists()
+
+
 def test_missing_published_row_is_not_unknown_telemetry(actual_inputs, tmp_path, monkeypatch):
     from coveo_recsys.cli import preparation as module
 
@@ -238,16 +273,15 @@ def test_missing_published_row_is_not_unknown_telemetry(actual_inputs, tmp_path,
 
 
 def test_actual_resume_and_batch_size_preserve_records(actual_inputs, tmp_path, monkeypatch):
-    complete = run(actual_inputs, tmp_path / "complete", batch_size=3)
-    publish = LocalArtifactStore.publish_json
+    from coveo_recsys.cli import preparation as module
 
-    def interrupt(self, path, *args, **kwargs):
-        if path == REPORT:
-            raise KeyboardInterrupt
-        return publish(self, path, *args, **kwargs)
+    complete = run(actual_inputs, tmp_path / "complete", batch_size=3)
+
+    def interrupt(*args, **kwargs):
+        raise KeyboardInterrupt
 
     with monkeypatch.context() as patch:
-        patch.setattr(LocalArtifactStore, "publish_json", interrupt)
+        patch.setattr(module, "write_report", interrupt)
         with pytest.raises(KeyboardInterrupt):
             run(actual_inputs, tmp_path / "resumed")
     assert not (tmp_path / "resumed" / REPORT).exists()
@@ -255,10 +289,10 @@ def test_actual_resume_and_batch_size_preserve_records(actual_inputs, tmp_path, 
     repeated = run(actual_inputs, tmp_path / "resumed", batch_size=3)
     assert complete["selection"] == resumed["selection"]
     assert repeated["report_sha256"] == resumed["report_sha256"]
-    first, second = (LocalArtifactStore(tmp_path / name) for name in ("complete", "resumed"))
-    for item in complete["datasets"]:
-        for key in ("canonical_path", "prefixes", "targets"):
-            assert first.read_bytes(item[key]) == second.read_bytes(item[key])
+    for path in complete["tables"]:
+        assert (tmp_path / "complete" / path).read_bytes() == (
+            tmp_path / "resumed" / path
+        ).read_bytes()
 
 
 def test_interruption_after_materialization_has_no_success_marker(
@@ -275,19 +309,14 @@ def test_interruption_after_materialization_has_no_success_marker(
         patch.setattr(Preparation, "progress", interrupt)
         with pytest.raises(KeyboardInterrupt):
             run(actual_inputs, tmp_path / "run")
-    store = LocalArtifactStore(tmp_path / "run")
-    report = json.loads(store.read_bytes(REPORT))
-    assert report["status"] == "materialized"
-    attempts = [
-        json.loads(p.read_bytes())
-        for p in (store.root / "preparation/executions").glob("*.json")
-        if not p.name.endswith(".artifact.json")
-    ]
-    assert len(attempts) == 1 and attempts[0]["status"] == "interrupted"
-    assert attempts[0]["reads"] and attempts[0]["elapsed_seconds"] > 0
+    assert not (tmp_path / "run" / REPORT).exists()
+    assert (tmp_path / "run/preparation/identity.json").is_file()
+    assert not (tmp_path / "run/preparation/executions").exists()
     resumed = run(actual_inputs, tmp_path / "run")
     assert resumed["status"] == "prepared"
     assert resumed["execution"]["status"] == "completed"
+    assert read_report(tmp_path / "run")["status"] == "completed"
+    assert not (tmp_path / "run/preparation/identity.json").exists()
 
 
 @pytest.mark.parametrize("field", ["max_seconds", "max_memory_bytes", "max_temp_bytes"])
@@ -310,7 +339,7 @@ def test_actual_budget_exceeded_is_failure(actual_inputs, tmp_path, field):
 @pytest.mark.parametrize("mutation", ["input", "profile", "plan", "code", "artifact"])
 def test_actual_reuse_rejects_changed_identity(actual_inputs, tmp_path, monkeypatch, mutation):
     destination = tmp_path / "run"
-    result = run(actual_inputs, destination)
+    run(actual_inputs, destination)
     if mutation in {"input", "profile", "plan"}:
         path = {
             "input": actual_inputs[0] / "browsing_train.csv",
@@ -321,7 +350,42 @@ def test_actual_reuse_rejects_changed_identity(actual_inputs, tmp_path, monkeypa
     elif mutation == "code":
         monkeypatch.setattr("coveo_recsys.cli.preparation.source_sha256", lambda _: "f" * 64)
     else:
-        path = destination / result["datasets"][0]["targets"]
+        path = destination / "datasets/A_G/targets.parquet"
         path.write_bytes(b"corrupted")
     with pytest.raises((ValueError, OSError)):
         run(actual_inputs, destination)
+
+
+@pytest.mark.parametrize("mutation", ["input", "profile", "plan", "code"])
+def test_incomplete_preparation_keeps_identity_before_recalculation(
+    actual_inputs, tmp_path, monkeypatch, mutation
+):
+    destination = tmp_path / "run"
+    progress = Preparation.progress
+
+    def interrupt(self, step, **fields):
+        progress(self, step, **fields)
+        if step == "prepared":
+            raise KeyboardInterrupt
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Preparation, "progress", interrupt)
+        with pytest.raises(KeyboardInterrupt):
+            run(actual_inputs, destination)
+    before = {p: (sha256_file(p), p.stat().st_mtime_ns) for p in destination.rglob("*.parquet")}
+    assert len(before) == 4 and not (destination / REPORT).exists()
+    if mutation == "code":
+        monkeypatch.setattr("coveo_recsys.cli.preparation.source_sha256", lambda _: "f" * 64)
+    else:
+        path = {
+            "input": actual_inputs[0] / "browsing_train.csv",
+            "profile": actual_inputs[1],
+            "plan": actual_inputs[2],
+        }[mutation]
+        path.write_bytes(path.read_bytes() + b"\n")
+    with pytest.raises(InputValidationError):
+        run(actual_inputs, destination)
+    assert not (destination / REPORT).exists()
+    assert all(
+        (sha256_file(path), path.stat().st_mtime_ns) == value for path, value in before.items()
+    )

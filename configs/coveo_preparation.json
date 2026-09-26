@@ -15,7 +15,7 @@
       "evaluation_protocol": "observed_purchases_v1"
     },
     "periods": [
-      {"name": "A_G", "start_ms": 1548028800000, "end_ms": 1549238400000, "sample_size": 10000},
+      {"name": "A_G", "start_ms": 1548028800000, "end_ms": 1549238400000, "sample_size": 50000},
       {"name": "A_N", "start_ms": 1549238400000, "end_ms": 1550448000000, "sample_size": 0},
       {"name": "B", "start_ms": 1550448000000, "end_ms": 1551657600000, "sample_size": 0},
       {"name": "C_smoke", "start_ms": 1551657600000, "end_ms": 1552262400000, "sample_size": 0},
@@ -39,10 +39,10 @@
     "max_group_bytes": 4194304,
     "max_session_blocks": 10000,
     "max_session_bytes": 8388608,
-    "max_sessions": 10000,
+    "max_sessions": 50000,
     "diagnostic_sessions": 0,
-    "max_seconds": 7200,
-    "max_memory_bytes": 1073741824,
-    "max_temp_bytes": 2147483648
+    "max_seconds": 14400,
+    "max_memory_bytes": 8589934592,
+    "max_temp_bytes": 4294967296
   }
 }

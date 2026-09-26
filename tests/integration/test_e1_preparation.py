@@ -7,9 +7,10 @@ from dataclasses import replace
 from pathlib import Path
 
 import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
-from coveo_recsys.artifacts import ArtifactError, LocalArtifactStore, sha256_bytes
+from coveo_recsys.artifacts import LocalArtifactStore, sha256_file
 from coveo_recsys.cli import main
 from coveo_recsys.contracts import InputValidationError
 from coveo_recsys.contracts.preparation import PERIOD_NAMES, PreparationPlan, PreparedRequest
@@ -18,6 +19,7 @@ from coveo_recsys.contracts.serialization import from_json, to_json
 from coveo_recsys.contracts.training import SessionRecord, TargetRecord
 from coveo_recsys.data.access import DatasetAccess
 from coveo_recsys.data.io import FILES
+from coveo_recsys.data.prepared import iter_sessions, read_report
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests/fixtures/e1"
@@ -64,29 +66,37 @@ def invoke(capsys, values, *, success=True):
 
 
 def records(store, path, record_type):
-    table = store.read_table(path)
-    assert table.column_names == ["record_json"]
-    assert table.schema.field("record_json").type == pa.binary()
-    return tuple(from_json(value, record_type) for value in table.column("record_json").to_pylist())
+    with pq.ParquetFile(store.root / path) as parquet:
+        assert parquet.schema_arrow.names == ["session_id", "record_json"]
+        assert parquet.schema_arrow.field("record_json").type == pa.binary()
+    return tuple(
+        record for _, rows in iter_sessions(store.root / path, record_type) for record in rows
+    )
 
 
 def dataset_records(store, report):
     result = {}
-    for dataset in report["datasets"]:
-        result[dataset["period"], dataset["session_id"]] = (
-            records(store, dataset["canonical_path"], CanonicalBlock),
-            records(store, dataset["prefixes"], PreparedRequest),
-            records(store, dataset["targets"], TargetRecord),
+    for period, ids in report["selection"].items():
+        if not ids:
+            continue
+        blocks = dict(iter_sessions(store.root / f"canonical/{period}.parquet", CanonicalBlock))
+        requests = dict(
+            iter_sessions(store.root / f"datasets/{period}/prefixes.parquet", PreparedRequest)
         )
+        targets = dict(
+            iter_sessions(store.root / f"datasets/{period}/targets.parquet", TargetRecord)
+        )
+        for sid in ids:
+            result[period, sid] = (blocks[sid], requests[sid], targets[sid])
     return result
 
 
-def descriptor_hashes(store):
-    paths = (
-        str(path.relative_to(store.root)).replace("\\", "/")[: -len(".artifact.json")]
-        for path in store.root.rglob("*.artifact.json")
-    )
-    return {path: store.describe(path).descriptor_sha256 for path in paths}
+def file_fingerprints(root):
+    return {
+        path.relative_to(root).as_posix(): (sha256_file(path), path.stat().st_mtime_ns)
+        for path in root.rglob("*")
+        if path.is_file()
+    }
 
 
 def copy_inputs(destination):
@@ -94,6 +104,77 @@ def copy_inputs(destination):
     for filename in FILES.values():
         shutil.copyfile(FIXTURES / filename, destination / filename)
     return destination
+
+
+@pytest.mark.parametrize("defect", ["product_columns", "product_id", "unselected_search"])
+def test_synthetic_prepare_validates_rows_outside_selected_events(tmp_path, capsys, defect):
+    input_dir = copy_inputs(tmp_path / "input")
+    if defect.startswith("product_"):
+        path = input_dir / FILES["products"]
+        with path.open(encoding="utf-8", newline="") as stream:
+            rows = list(csv.reader(stream))
+        if defect == "product_columns":
+            rows[2].pop()
+        else:
+            rows[2][0] = ""
+        with path.open("w", encoding="utf-8", newline="") as stream:
+            csv.writer(stream).writerows(rows)
+    else:
+        with (input_dir / FILES["search"]).open("a", encoding="utf-8", newline="") as stream:
+            # s3 исключается из отбора: первая покупка одновременна первому detail.
+            csv.writer(stream).writerow(["s3", "q-invalid", "3000", "[1,0]", "[", "[]"])
+    run_dir = tmp_path / "run"
+    invoke(capsys, arguments("prepare", run_dir, input_dir=input_dir), success=False)
+    assert not (run_dir / REPORT).exists()
+    assert not list(run_dir.rglob("*.parquet"))
+
+
+def test_progress_reports_throttled_json_and_hashing_to_stderr(tmp_path, capsys, monkeypatch):
+    from coveo_recsys.cli import preparation as module
+
+    now = [100.0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(
+        module, "_peak_memory", lambda: {"peak_process_memory_bytes": 1234, "memory_method": "test"}
+    )
+    preparation = module.Preparation(LocalArtifactStore(tmp_path / "run"), ROOT, "progress-test")
+    preparation.progress("canonical_session", sessions=1)
+    now[0] = 109.999
+    preparation.progress("prepared_session", sessions=2)
+    now[0] = 110.0
+    preparation.progress("reading", table="browsing", rows=10)
+    preparation.progress("selection_complete", sessions=2)
+    preparation.progress("failed", reason="test_failure")
+    now[0] = 120.0
+    preparation._input_hashes(FIXTURES)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    entries = [json.loads(line) for line in captured.err.splitlines()]
+    assert [item["step"] for item in entries] == [
+        "canonical_session",
+        "reading",
+        "selection_complete",
+        "failed",
+        "hashing",
+    ]
+    assert all(item["peak_process_memory_bytes"] == 1234 for item in entries)
+    assert entries[-1]["bytes"] == (FIXTURES / FILES["browsing"]).stat().st_size
+    assert all(
+        set(item)
+        <= {
+            "step",
+            "elapsed_seconds",
+            "peak_process_memory_bytes",
+            "memory_method",
+            "sessions",
+            "table",
+            "rows",
+            "reason",
+            "bytes",
+        }
+        for item in entries
+    )
+    assert preparation.last_progress["table"] == "products"
 
 
 def assert_prefix_only(request):
@@ -154,26 +235,24 @@ def test_cli_inspect_then_prepare_has_exact_fixture_results(tmp_path, capsys):
     assert result["exclusions"] == {"no_request": 1}
     assert result["report_path"] == REPORT
     store = LocalArtifactStore(run_dir)
-    stored = json.loads(store.read_bytes(REPORT))
+    stored = read_report(run_dir)
     assert stored == {
         **{
             key: value
             for key, value in result.items()
             if key not in {"report_path", "report_sha256", "status", "execution", "execution_path"}
         },
-        "status": "materialized",
+        "status": "completed",
     }
-    assert result["report_sha256"] == store.describe(REPORT).sha256
-    for path, digest in result["artifacts"].items():
-        descriptor = store.describe(path)
-        assert descriptor.descriptor_sha256 == digest
-        assert descriptor.scope == "synthetic" and descriptor.run_id == "integration_e1"
-
-    canonical_index = json.loads(store.read_bytes("canonical/index.json"))
-    assert {
-        row["session_id"]: len(records(store, row["path"], CanonicalBlock))
-        for row in canonical_index
-    } == {"s1": 5, "s2": 3}
+    assert result["report_sha256"] == sha256_file(run_dir / REPORT)
+    assert set(result["tables"]) == {
+        "canonical/A_G.parquet",
+        "preparation/sessions.parquet",
+        "datasets/A_G/prefixes.parquet",
+        "datasets/A_G/targets.parquet",
+    }
+    canonical = dict(iter_sessions(run_dir / "canonical/A_G.parquet", CanonicalBlock))
+    assert {sid: len(rows) for sid, rows in canonical.items()} == {"s1": 5, "s2": 3}
     sessions = {
         row.session_id: row for row in records(store, "preparation/sessions.parquet", SessionRecord)
     }
@@ -250,82 +329,61 @@ def test_batch_and_external_sort_chunk_sizes_do_not_change_records(tmp_path, cap
 
 
 def test_compatible_repeat_preserves_artifact_identity(tmp_path, capsys):
-    values = arguments("prepare", tmp_path / "run")
+    run_dir = tmp_path / "run"
+    values = arguments("prepare", run_dir)
     first = invoke(capsys, values)
-    store = LocalArtifactStore(tmp_path / "run")
-    before = descriptor_hashes(store)
+    before = file_fingerprints(run_dir)
     repeated = invoke(capsys, values)
     assert repeated["report_sha256"] == first["report_sha256"]
-    after = descriptor_hashes(store)
-    assert all(after[path] == digest for path, digest in before.items())
-    assert all(
-        path.startswith(("preparation/progress/", "preparation/executions/"))
-        for path in after.keys() - before.keys()
-    )
+    assert file_fingerprints(run_dir) == before
+    assert len(before) == 5  # Четыре общие таблицы и один итоговый отчёт.
 
 
-def test_rejected_nested_inspect_preserves_outer_report_dependencies(tmp_path, monkeypatch):
-    from coveo_recsys.cli.preparation import Preparation
+def test_rejected_nested_inspect_preserves_preparation_identity(tmp_path, monkeypatch):
+    from coveo_recsys.cli import preparation as module
 
     store = LocalArtifactStore(tmp_path / "run")
-    preparation = Preparation(store, ROOT, "integration_e1")
-    publish = store.publish_json
-    expected_dependencies = {}
+    preparation = module.Preparation(store, ROOT, "integration_e1")
+    publish = module.write_report
     rejected = False
 
-    def nested_before_report(relative_path, value, **kwargs):
-        nonlocal rejected, expected_dependencies
-        if relative_path == REPORT:
-            expected_dependencies = dict(preparation.artifacts)
-            with pytest.raises(ArtifactError):
-                preparation.inspect(FIXTURES, PROFILE, batch_size=1024, max_batch_chars=4_194_304)
-            rejected = True
-        return publish(relative_path, value, **kwargs)
+    def nested_before_report(root, report, **kwargs):
+        nonlocal rejected
+        with pytest.raises(InputValidationError):
+            preparation.inspect(FIXTURES, PROFILE, batch_size=1024, max_batch_chars=4_194_304)
+        rejected = True
+        return publish(root, report, **kwargs)
 
-    monkeypatch.setattr(store, "publish_json", nested_before_report)
+    monkeypatch.setattr(module, "write_report", nested_before_report)
     result = preparation.prepare(
         FIXTURES, PROFILE, PLAN, batch_size=1024, max_batch_chars=4_194_304
     )
     assert rejected and result["status"] == "prepared"
-    assert {"canonical/index.json", "preparation/selection.json"} <= expected_dependencies.keys()
-    target = result["datasets"][0]["targets"]
-    assert target in expected_dependencies
-    assert store.describe(REPORT).artifact_dependencies == expected_dependencies
-    assert preparation.artifacts == result["artifacts"] == expected_dependencies
-    assert json.loads(store.read_bytes(REPORT))["artifacts"] == expected_dependencies
-
-    # Сохранённая цепочка обязана обнаружить последующее повреждение выбранной цели.
-    monkeypatch.setattr(store, "publish_json", publish)
-    path = store.root / target
-    data = path.read_bytes()
-    path.write_bytes(bytes([data[0] ^ 1]) + data[1:])
-    with pytest.raises(ArtifactError):
-        Preparation(store, ROOT, "integration_e1").prepare(
-            FIXTURES, PROFILE, PLAN, batch_size=1024, max_batch_chars=4_194_304
-        )
+    assert preparation.artifacts == {}
+    assert read_report(store.root)["tables"] == result["tables"]
 
 
 def test_resume_after_report_failure_reuses_completed_artifacts(tmp_path, capsys, monkeypatch):
-    values = arguments("prepare", tmp_path / "run")
-    publish = LocalArtifactStore.publish_json
+    from coveo_recsys.cli import preparation as module
 
-    def fail_report(self, relative_path, value, **kwargs):
-        if relative_path == REPORT:
-            raise OSError("injected_before_preparation_report")
-        return publish(self, relative_path, value, **kwargs)
+    run_dir = tmp_path / "run"
+    values = arguments("prepare", run_dir)
+    publish = module.write_report
 
-    monkeypatch.setattr(LocalArtifactStore, "publish_json", fail_report)
+    def fail_report(*args, **kwargs):
+        raise OSError("injected_before_preparation_report")
+
+    monkeypatch.setattr(module, "write_report", fail_report)
     failed = invoke(capsys, values, success=False)
     assert "injected_before_preparation_report" in failed["message"]
-    store = LocalArtifactStore(tmp_path / "run")
-    assert not (store.root / REPORT).exists()
-    before = descriptor_hashes(store)
-    assert any(path.endswith(".parquet") for path in before)
-    monkeypatch.setattr(LocalArtifactStore, "publish_json", publish)
+    assert not (run_dir / REPORT).exists()
+    before = {p: value for p, value in file_fingerprints(run_dir).items() if p.endswith(".parquet")}
+    assert len(before) == 4
+    monkeypatch.setattr(module, "write_report", publish)
     resumed = invoke(capsys, values)
-    assert resumed["status"] == "prepared"
-    assert all(store.describe(path).descriptor_sha256 == digest for path, digest in before.items())
-    assert resumed["request_count"] == 2
+    assert resumed["status"] == "prepared" and resumed["request_count"] == 2
+    assert all(file_fingerprints(run_dir)[path] == value for path, value in before.items())
+    assert not (run_dir / "preparation/identity.json").exists()
 
 
 @pytest.mark.parametrize("mutation", ["input", "plan", "code", "artifact"])
@@ -335,7 +393,7 @@ def test_incompatible_or_corrupted_checkpoint_is_rejected(tmp_path, capsys, monk
     shutil.copyfile(PLAN, plan_path)
     run_dir = tmp_path / "run"
     values = arguments("prepare", run_dir, input_dir=input_dir, plan=plan_path)
-    result = invoke(capsys, values)
+    invoke(capsys, values)
     old_report = (run_dir / REPORT).read_bytes()
     if mutation == "input":
         with (input_dir / FILES["browsing"]).open("a", encoding="utf-8", newline="") as stream:
@@ -346,7 +404,7 @@ def test_incompatible_or_corrupted_checkpoint_is_rejected(tmp_path, capsys, monk
     elif mutation == "code":
         monkeypatch.setattr("coveo_recsys.cli.preparation.source_sha256", lambda _: "f" * 64)
     else:
-        path = run_dir / result["datasets"][0]["prefixes"]
+        path = run_dir / "datasets/A_G/prefixes.parquet"
         data = path.read_bytes()
         path.write_bytes(bytes([data[0] ^ 1]) + data[1:])
     invoke(capsys, values, success=False)
@@ -393,19 +451,13 @@ def test_reuse_rechecks_dependencies_after_last_progress(tmp_path, capsys, monke
     invoke(capsys, values, success=False)
     assert changed  # Изменение действительно произошло после чтения готовой контрольной точки.
     assert (run_dir / REPORT).read_bytes() == old_report
-    assert LocalArtifactStore(run_dir).read_bytes(REPORT) == old_report
+    assert (run_dir / REPORT).read_bytes() == old_report
 
 
-@pytest.mark.parametrize("component", ["payload", "descriptor", "object"])
-@pytest.mark.parametrize("node", ["shared", "own"])
+@pytest.mark.parametrize("path", ["canonical/A_G.parquet", "datasets/A_G/targets.parquet"])
 @pytest.mark.parametrize("mode", ["prepare", "reuse"])
 def test_prepare_final_verification_rejects_late_artifact_corruption(
-    tmp_path,
-    capsys,
-    monkeypatch,
-    mode,
-    node,
-    component,
+    tmp_path, capsys, monkeypatch, mode, path
 ):
     from coveo_recsys.cli.preparation import Preparation
 
@@ -421,33 +473,16 @@ def test_prepare_final_verification_rejects_late_artifact_corruption(
         progress(self, step, **fields)
         if step != ("prepared_reused" if mode == "reuse" else "prepared"):
             return
-        relative = "canonical/index.json" if node == "shared" else REPORT
-        descriptor = self.store.describe(relative)
-        if component == "descriptor":
-            path = self.store.root / (relative + ".artifact.json")
-            data = json.loads(path.read_bytes())
-            data["metadata"]["changed_after_verification"] = True
-            encoded = json.dumps(data, ensure_ascii=False).encode("utf-8")
-            path.write_bytes(encoded)
-            (self.store.root / (relative + ".artifact.sha256")).write_text(
-                sha256_bytes(encoded) + "\n", encoding="ascii"
-            )
-        else:
-            path = self.store.root / (
-                f".objects/{descriptor.sha256}" if component == "object" else relative
-            )
-            data = path.read_bytes()
-            path.write_bytes(bytes([data[0] ^ 1]) + data[1:])
+        target = self.store.root / path
+        data = target.read_bytes()
+        target.write_bytes(bytes([data[0] ^ 1]) + data[1:])
         changed = True
 
     monkeypatch.setattr(Preparation, "progress", corrupt_after_final_progress)
-    capsys.readouterr()
-    code = main(values)
-    result = json.loads(capsys.readouterr().out)
+    invoke(capsys, values, success=False)
     assert changed, "Инъекция должна сработать после последней записи progress"
-    assert code != 0 and result["status"] == "failed", (
-        f"{mode}/{node}/{component}: успех после позднего повреждения артефакта"
-    )
+    if mode == "prepare":
+        assert not (run_dir / REPORT).exists()
 
 
 def test_seven_period_datasets_enforce_purpose_and_log_direct_path_attempts(tmp_path, capsys):
@@ -471,41 +506,36 @@ def test_seven_period_datasets_enforce_purpose_and_log_direct_path_attempts(tmp_
     result = invoke(capsys, arguments("prepare", run_dir, input_dir=input_dir, batch_size=1))
     assert result["canonical_sessions"] == result["request_count"] == 7
     assert result["canonical_blocks"] == 14 and result["exclusions"] == {}
-    datasets = {row["period"]: row for row in result["datasets"]}
-    assert set(datasets) == set(PERIOD_NAMES)
-    store = LocalArtifactStore(run_dir)
+    assert set(result["selection"]) == set(PERIOD_NAMES)
+    audit = []
     access = DatasetAccess(
-        store, code_sha256=store.describe(REPORT).code_sha256, run_id="integration_e1"
+        run_dir, code_sha256=result["source_sha256"], run_id="integration_e1", audit=audit.append
     )
-    for period, dataset in datasets.items():
+    for period in PERIOD_NAMES:
         assert result["selection"][period] == [f"s_{period}"]
-        assert dataset["requests"] == 1
-        assert "cohort" not in dataset
-        for kind, purpose in [("prefixes", "prefix"), ("targets", "labels")]:
-            path = dataset[kind]
+        for kind, record_type, purpose in [
+            ("prefixes", PreparedRequest, "prefix"),
+            ("targets", TargetRecord, "labels"),
+        ]:
+            path = f"datasets/{period}/{kind}.parquet"
             if period in {"A_G", "B", "C_smoke"}:
-                assert access.read(path, purpose=purpose) == store.read_bytes(path)
+                assert tuple(access.read(path, record_type, purpose=purpose)) == tuple(
+                    iter_sessions(run_dir / path, record_type)
+                )
             else:
-                assert (run_dir / path).is_file()  # Запрет маршрута, а не отсутствие файла.
+                assert (run_dir / path).is_file()
                 with pytest.raises(InputValidationError):
-                    access.read(path, purpose=purpose)
+                    tuple(access.read(path, record_type, purpose=purpose))
     with pytest.raises(InputValidationError):
-        access.read(datasets["B"]["targets"], purpose="prefix")
-    log_paths = [
-        path
-        for path in (run_dir / "access").glob("*.json")
-        if not path.name.endswith(".artifact.json")
-    ]
-    logs = [
-        json.loads(store.read_bytes(path.relative_to(run_dir).as_posix())) for path in log_paths
-    ]
-    assert len(logs) == 15 and sum(log["allowed"] for log in logs) == 6
-    assert all(log["boundary"] == "local_routing_only" for log in logs)
-    assert {(log["path"], log["purpose"]) for log in logs if not log["allowed"]} == {
+        tuple(access.read("datasets/B/targets.parquet", TargetRecord, purpose="prefix"))
+    assert len(audit) == 15 and sum(log["allowed"] for log in audit) == 6
+    assert all(log["boundary"] == "local_routing_only" for log in audit)
+    assert {(log["path"], log["purpose"]) for log in audit if not log["allowed"]} == {
         *(
-            (datasets[period][kind], purpose)
+            (f"datasets/{period}/{kind}.parquet", purpose)
             for period in ("A_N", "C_select", "E", "D")
             for kind, purpose in (("prefixes", "prefix"), ("targets", "labels"))
         ),
-        (datasets["B"]["targets"], "prefix"),
+        ("datasets/B/targets.parquet", "prefix"),
     }
+    assert not (run_dir / "access").exists()

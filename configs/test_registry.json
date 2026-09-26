@@ -187,6 +187,7 @@
         "tests/unit/test_manifest_evidence.py",
         "tests/integration/test_e1_preparation.py",
         "tests/unit/test_e1_verification.py",
+        "tests/unit/test_prepared_tables.py",
         "tests/unit/test_architecture.py",
         "tests/unit/test_supply_reader.py",
         "tests/integration/test_supply_cli.py",

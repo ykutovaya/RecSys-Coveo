@@ -1,42 +1,28 @@
-"""Проверяемое чтение всех опубликованных событий закреплённого A_G.
-
-Вход остаётся неизменным: журнал передаёт вызывающий сценарий новой сборки.
-Хеш производителя подготовки независим от кода сборщика Э2.
-"""
+"""Порционное чтение закреплённого A_G без открытия запросов и целей."""
 
 from __future__ import annotations
 
-import io
-import json
 import re
 from collections import Counter
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, TypeVar
+from typing import Any
 
-import pyarrow as pa
-import pyarrow.parquet as pq
-
-from coveo_recsys.artifacts import LocalArtifactStore, sha256_bytes, strict_json_loads
-from coveo_recsys.contracts import CONTRACT_VERSION, InputValidationError, id_bytes
+from coveo_recsys.artifacts import sha256_bytes, strict_json_loads
+from coveo_recsys.contracts import InputValidationError, id_bytes
 from coveo_recsys.contracts.historical import HistoricalInput, Session
-from coveo_recsys.contracts.preparation import (
-    EVALUATION_PROTOCOL,
-    PERIOD_NAMES,
-    PREPARATION_VERSION,
-    PreparationPlan,
-)
+from coveo_recsys.contracts.preparation import EVALUATION_PROTOCOL, PERIOD_NAMES, PreparationPlan
 from coveo_recsys.contracts.records import CanonicalBlock, EventType
-from coveo_recsys.contracts.serialization import from_json, record_schema, record_version, to_json
+from coveo_recsys.contracts.serialization import from_json
 from coveo_recsys.contracts.training import SessionRecord
-from coveo_recsys.data.io import FILES, load_profile
+from coveo_recsys.data.io import FILES, parse_profile
 from coveo_recsys.data.periods import admit, session_key
+from coveo_recsys.data.prepared import iter_sessions, read_report, verify_tables
 from coveo_recsys.numerics import checked_add
 
-_REPORT = "reports/preparation.json"
-_TABLE_SCHEMA = pa.schema([pa.field("record_json", pa.binary(), nullable=False)])
-_R = TypeVar("_R", CanonicalBlock, SessionRecord)
+_CANONICAL = "canonical/A_G.parquet"
+_SESSIONS = "preparation/sessions.parquet"
 
 
 def _require(condition: bool, reason: str) -> None:
@@ -44,19 +30,11 @@ def _require(condition: bool, reason: str) -> None:
         raise InputValidationError(reason)
 
 
-def _records(content: bytes, kind: type[_R], rows: int) -> tuple[_R, ...]:
-    table = pq.read_table(io.BytesIO(content))
-    _require(table.schema.equals(_TABLE_SCHEMA), "Несовместимая схема таблицы записей")
-    _require(table.num_rows == rows, "Число строк таблицы не совпало")
-    return tuple(from_json(value, kind) for value in table["record_json"].to_pylist())
-
-
 def _validate_session(
     blocks: Session,
     session: SessionRecord,
     plan: PreparationPlan,
     selected: dict[str, Any],
-    index: dict[str, Any],
     inputs: dict[str, str],
     seen_origins: set[str],
 ) -> None:
@@ -134,160 +112,52 @@ def _validate_session(
         == min(checked_add(first_request, plan.task.horizon_ms), blocks[-1].event_time_ms),
         "Реестр содержит неверную границу наблюдаемого окна",
     )
+    count_map = selected["source_rows"]
     _require(
-        len(blocks) == index["blocks"]
-        and sum(len(to_json(block)) for block in blocks) == index["encoded_bytes"],
-        "Потеряны опубликованные блоки сессии",
+        set(count_map) <= {FILES["browsing"], FILES["search"]}
+        and all(type(n) is int and n >= 0 for n in count_map.values())
+        and all(
+            counts[name] == count_map.get(name, 0) for name in (FILES["browsing"], FILES["search"])
+        ),
+        "Потеряны исходные строки выбранной сессии",
     )
-    for count_map in (selected["source_rows"], index["source_rows"]):
-        _require(
-            set(count_map) <= {FILES["browsing"], FILES["search"]}
-            and all(type(n) is int and n >= 0 for n in count_map.values())
-            and all(
-                counts[name] == count_map.get(name, 0)
-                for name in (FILES["browsing"], FILES["search"])
-            ),
-            "Потеряны исходные строки выбранной сессии",
-        )
 
 
 def open_historical_input(
     root: Path,
     *,
     report_sha256: str,
-    report_descriptor_sha256: str,
-    execution_path: str,
-    execution_descriptor_sha256: str,
     audit: Callable[[dict[str, Any]], None],
 ) -> HistoricalInput:
-    """Открыть только готовую подготовку, привязанную к доверенному отчёту.
-
-    Читаемые пути закреплены дескриптором отчёта. Каждый проход повторно
-    проверяет использованные файлы и объектные копии перед успешным возвратом.
-    Исходы datasets не открываются; отчёт закрепляет их хеши без чтения целей.
-    """
-    opened: dict[str, Any] = {
-        "purpose": "historical_input",
-        "allowed": False,
-        "boundary": "local_routing_only",
-        "reason": "incomplete_open",
-    }
+    """Открыть завершённый набор; каждый проход проверяет только используемые таблицы."""
+    opened: dict[str, Any] = dict(
+        purpose="historical_input",
+        allowed=False,
+        boundary="local_routing_only",
+        reason="incomplete_open",
+    )
     try:
-        _require(root.is_dir() and not root.is_symlink(), "Нет корня готовой подготовки")
-        store = LocalArtifactStore(root)
-        report_descriptor = store.describe(_REPORT)
-        _require(
-            report_descriptor.sha256 == report_sha256
-            and report_descriptor.descriptor_sha256 == report_descriptor_sha256,
-            "Отчёт не совпал с закреплённой идентичностью",
-        )
-        report = strict_json_loads(store.read_by_sha256(report_sha256))
-        _require(
-            report["status"] == "materialized"
-            and report["contract_version"] == PREPARATION_VERSION
-            and report["evaluation_protocol"] == EVALUATION_PROTOCOL
-            and report["scope"] in {"actual", "synthetic"}
-            and report["real_preflight"] is False
-            and report["telemetry_complete"] is None
-            and report["source_sha256"] == report_descriptor.code_sha256
-            and report["artifacts"] == report_descriptor.artifact_dependencies,
-            "Отчёт не является совместимой подготовкой observed_purchases_v1",
-        )
+        report = read_report(root, report_sha256=report_sha256, verify_tables=False)
         inputs: dict[str, str] = report["inputs"]
         _require(set(inputs) == {*FILES, "profile", "plan"}, "Неполный состав входов подготовки")
-        pins: dict[str, str] = {
-            **report["artifacts"],
-            _REPORT: report_descriptor_sha256,
-            execution_path: execution_descriptor_sha256,
-        }
-        used: dict[str, str] = {}
-
-        def payload(
-            path: str,
-            *,
-            version: str,
-            kind: str = "json",
-            expected_inputs: dict[str, str] | None = None,
-            configuration: dict[str, Any] | None = None,
-        ) -> bytes:
-            descriptor = store.verify_compatible(
-                path,
-                expected_inputs=inputs if expected_inputs is None else expected_inputs,
-                expected_code_sha256=report["source_sha256"],
-                expected_schema_version=version,
-                expected_configuration={} if configuration is None else configuration,
-                expected_descriptor_sha256=pins[path],
-            )
-            _require(
-                descriptor.run_id == report["run_id"]
-                and descriptor.scope == report["scope"]
-                and descriptor.config_id == "e1_code"
-                and descriptor.artifact_version == "1"
-                and descriptor.kind == kind
-                and all(
-                    pins.get(p) == digest for p, digest in descriptor.artifact_dependencies.items()
-                ),
-                "Чужой производитель, область или зависимость артефакта",
-            )
-            used[path] = descriptor.descriptor_sha256
-            return store.read_by_sha256(descriptor.sha256)
-
-        def recheck() -> None:
-            for path, expected in used.items():
-                descriptor = store.describe(path)
-                _require(descriptor.descriptor_sha256 == expected, "Вход изменился при чтении")
-                store.read_by_sha256(descriptor.sha256)
-
-        payload(_REPORT, version=PREPARATION_VERSION)
+        plan_bytes = report["plan_json"].encode("utf-8")
+        profile_bytes = report["profile_json"].encode("utf-8")
         _require(
-            re.fullmatch(r"preparation/executions/[^/]+\.json", execution_path) is not None,
-            "Некорректный путь завершённого выполнения",
+            sha256_bytes(plan_bytes) == inputs["plan"]
+            and sha256_bytes(profile_bytes) == inputs["profile"],
+            "Подменён план подготовки либо профиль поставки",
         )
-        execution = strict_json_loads(payload(execution_path, version="1"))
-        _require(
-            execution["status"] == "completed"
-            and store.describe(execution_path).artifact_dependencies
-            == {_REPORT: report_descriptor_sha256},
-            "Подготовка не имеет завершённого выполнения",
-        )
-        plan_bytes = payload("inputs/plan.json", version=PREPARATION_VERSION)
-        _require(sha256_bytes(plan_bytes) == inputs["plan"], "Подменён план подготовки")
         plan = from_json(plan_bytes, PreparationPlan)
-        profile_bytes = payload(
-            "inputs/profile.json", version="1", expected_inputs={"profile": inputs["profile"]}
-        )
-        _require(sha256_bytes(profile_bytes) == inputs["profile"], "Подменён профиль поставки")
-        profile = load_profile(root / "inputs/profile.json")
+        profile = parse_profile(strict_json_loads(profile_bytes), sha256=inputs["profile"])
         _require(
-            profile.sha256 == inputs["profile"]
-            and profile.namespace == plan.source_namespace
+            profile.namespace == plan.source_namespace
             and profile.scope == plan.scope == report["scope"]
             and profile.dimensions["query"] == plan.task.query_dimension
             and plan.diagnostic_sessions == 0
             and all(p.sample_size == 0 for p in plan.periods if p.name != "A_G"),
             "Профиль и план не разрешают исторический вход A_G",
         )
-        catalog = strict_json_loads(
-            payload(
-                "inputs/catalog.json",
-                version="1",
-                expected_inputs={k: v for k, v in inputs.items() if k != "plan"},
-            )
-        )
-        _require(
-            catalog["scope"] == plan.scope
-            and catalog["profile_sha256"] == inputs["profile"]
-            and all(catalog["files"][key]["sha256"] == inputs[key] for key in FILES),
-            "Происхождение исходных таблиц не совпало",
-        )
-        for record_type in (CanonicalBlock, SessionRecord):
-            path = f"preparation/schemas/{record_type.__name__}.json"
-            schema = strict_json_loads(
-                payload(path, version=record_version(record_type), expected_inputs={})
-            )
-            _require(schema == record_schema(record_type), "Несовместимая схема записей подготовки")
-        selection_bytes = payload("preparation/selection.json", version=PREPARATION_VERSION)
-        sampled = strict_json_loads(selection_bytes)
+        sampled = report["sampled"]
         selection = sampled["selection"]
         _require(
             sampled["evaluation_protocol"] == EVALUATION_PROTOCOL
@@ -309,64 +179,29 @@ def open_historical_input(
             and len(selected) == sampled["period_counts"]["A_G"]["selected"],
             "Состав выбранных сессий не совпал",
         )
-        index = strict_json_loads(payload("canonical/index.json", version=CONTRACT_VERSION))
-        _require(
-            len(index) == len(selected)
-            and {item["session_id"] for item in index} == selected
-            and len({item["path"] for item in index}) == len(index),
-            "Индекс не соответствует выбранным сессиям",
-        )
-        for item in index:
-            key = sha256_bytes(
-                json.dumps([plan.source_namespace, item["session_id"]], ensure_ascii=False).encode(
-                    "utf-8"
-                )
-            )
+        for path, kind, period, count in (
+            (_CANONICAL, CanonicalBlock, "A_G", report["canonical_blocks"]),
+            (_SESSIONS, SessionRecord, None, len(selected)),
+        ):
+            table = report["tables"][path]
             _require(
-                item["key"] == key and item["path"] == f"canonical/{key}.parquet",
-                "Подменён путь канонической сессии",
+                table["record_type"] == kind.__name__
+                and table["period"] == period
+                and table["data_role"] is None
+                and table["rows"] == count,
+                "Несовместимая таблица исторического входа",
             )
-        datasets = report["datasets"]
-        _require(
-            len(datasets) == len(selected)
-            and {d["session_id"] for d in datasets} == selected
-            and all(d["period"] == "A_G" and d["requests"] == 1 for d in datasets)
-            and {d["session_id"]: d["canonical_path"] for d in datasets}
-            == {item["session_id"]: item["path"] for item in index},
-            "Отчёт наборов не соответствует индексу A_G",
-        )
-        sessions = _records(
-            payload(
-                "preparation/sessions.parquet",
-                version=record_version(SessionRecord),
-                kind="parquet",
-                configuration={"record_type": "SessionRecord"},
-            ),
-            SessionRecord,
-            len(selected),
-        )
-        registry = {session.session_id: session for session in sessions}
-        _require(
-            set(registry) == selected
-            and all(
-                s.source_namespace == plan.source_namespace and s.admitted and s.period == "A_G"
-                for s in sessions
-            ),
-            "Реестр допуска не соответствует выбранным сессиям A_G",
-        )
-        snapshot = next(p.end_ms for p in plan.periods if p.name == "A_G")
+
+        def recheck() -> None:
+            read_report(root, report_sha256=report_sha256, verify_tables=False)
+            verify_tables(root, report, paths=(_CANONICAL, _SESSIONS))
+
         hashes = {
             **inputs,
             "preparation_code": report["source_sha256"],
             "preparation_report": report_sha256,
-            "preparation_report_descriptor": report_descriptor_sha256,
-            "preparation_execution_descriptor": execution_descriptor_sha256,
-            "preparation_selection": sha256_bytes(selection_bytes),
-            "preparation_selection_descriptor": pins["preparation/selection.json"],
-            "preparation_index_descriptor": pins["canonical/index.json"],
-            "preparation_sessions_descriptor": pins["preparation/sessions.parquet"],
-            "canonical_schema": pins["preparation/schemas/CanonicalBlock.json"],
-            "session_schema": pins["preparation/schemas/SessionRecord.json"],
+            "preparation_canonical": report["tables"][_CANONICAL]["sha256"],
+            "preparation_sessions": report["tables"][_SESSIONS]["sha256"],
         }
         recheck()
         opened.update(allowed=True, reason=None, scope=plan.scope)
@@ -391,35 +226,34 @@ def open_historical_input(
         try:
             recheck()
             seen_origins: set[str] = set()
-            for item in index:
-                blocks = _records(
-                    payload(
-                        item["path"],
-                        version=record_version(CanonicalBlock),
-                        kind="parquet",
-                        configuration={
-                            "record_type": "CanonicalBlock",
-                            "source_namespace": plan.source_namespace,
-                            "session_id": item["session_id"],
-                        },
-                    ),
-                    CanonicalBlock,
-                    item["blocks"],
+            registry = iter_sessions(root / _SESSIONS, SessionRecord, max_session_records=1)
+            seen_sessions: set[str] = set()
+            for sid, blocks in iter_sessions(
+                root / _CANONICAL,
+                CanonicalBlock,
+                max_session_records=plan.max_session_blocks,
+                max_session_bytes=plan.max_session_bytes,
+            ):
+                entry = next(registry, None)
+                _require(
+                    sid in selected and entry is not None and entry[0] == sid,
+                    "Реестр и события не соответствуют выбранным сессиям",
                 )
+                assert entry is not None
                 _validate_session(
-                    blocks,
-                    registry[item["session_id"]],
-                    plan,
-                    sampled["selected_rows"][item["session_id"]],
-                    item,
-                    inputs,
-                    seen_origins,
+                    blocks, entry[1][0], plan, sampled["selected_rows"][sid], inputs, seen_origins
                 )
+                seen_sessions.add(sid)
                 reading["sessions"] += 1
                 reading["blocks"] += len(blocks)
                 reading["source_rows"] = len(seen_origins)
                 yield blocks
-            _require(reading["blocks"] == report["canonical_blocks"], "Потеряны блоки подготовки")
+            _require(
+                next(registry, None) is None
+                and seen_sessions == selected
+                and reading["blocks"] == report["canonical_blocks"],
+                "Потеряны сессии или блоки подготовки",
+            )
             recheck()
             reading.update(allowed=True, complete=True, reason=None)
         except (KeyError, TypeError, ValueError, OSError) as exc:
@@ -431,7 +265,7 @@ def open_historical_input(
     return HistoricalInput(
         iterate,
         len(selected),
-        snapshot,
+        next(p.end_ms for p in plan.periods if p.name == "A_G"),
         plan.source_namespace,
         MappingProxyType(hashes),
         plan.scope,

@@ -34,6 +34,7 @@ def run_historical(
     from coveo_recsys.cli.preparation import _peak_memory
     from coveo_recsys.data.historical import open_historical_input
     from coveo_recsys.data.metadata import open_metadata_source
+    from coveo_recsys.data.prepared import read_report
     from coveo_recsys.historical.build import build_historical
     from coveo_recsys.verification.provenance import assert_source_binding, source_sha256
 
@@ -71,8 +72,10 @@ def run_historical(
     try:
         admitted = open_historical_input(source_root, audit=audit.append, **preparation)
         common["scope"] = admitted.scope
-        input_store = LocalArtifactStore(source_root)
-        profile_bytes = input_store.read_bytes("inputs/profile.json")
+        source_report = read_report(
+            source_root, report_sha256=preparation["report_sha256"], verify_tables=False
+        )
+        profile_bytes = source_report["profile_json"].encode("utf-8")
         if sha256_bytes(profile_bytes) != admitted.input_hashes["profile"]:
             raise ValueError("Профиль поставки изменился")
         metadata = open_metadata_source(

@@ -3,7 +3,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from coveo_recsys.artifacts import ArtifactError, LocalArtifactStore
+from coveo_recsys.artifacts import ArtifactError, LocalArtifactStore, sha256_bytes
 from coveo_recsys.cli.historical import publish_package
 from coveo_recsys.contracts.historical import HistoricalConfig
 from coveo_recsys.historical.build import build_historical
@@ -133,16 +133,11 @@ def test_cli_builds_and_reuses_completed_preparation(tmp_path, capsys, request):
     from coveo_recsys.cli import main
 
     root = Path(__file__).resolve().parents[2]
-    source, execution = request.getfixturevalue("prepared_source")
-    store = LocalArtifactStore(source)
-    report = store.describe("reports/preparation.json")
+    source = request.getfixturevalue("prepared_source")
     settings = {
         "preparation": {
             "path": str(source),
-            "report_sha256": report.sha256,
-            "report_descriptor_sha256": report.descriptor_sha256,
-            "execution_path": execution,
-            "execution_descriptor_sha256": store.describe(execution).descriptor_sha256,
+            "report_sha256": sha256_bytes((source / "reports/preparation.json").read_bytes()),
         },
         "metadata_path": str(source.parent / "input/sku_to_content.csv"),
         "config": {"snapshot_time_ms": 200_000_000},
