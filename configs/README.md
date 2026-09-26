@@ -9,11 +9,16 @@
 | [coveo_historical.json](/configs/coveo_historical.json) | Закреплённый готовый A_G, метаданные, параметры графа и бюджеты Э2. Новая сборка не меняет входную подготовку и не требует `preflight`. |
 | [synthetic_csv.json](/configs/synthetic_csv.json) | Соответствие столбцов искусственных CSV внутренним полям. |
 | [synthetic_preparation.json](/configs/synthetic_preparation.json) | План искусственной подготовки: задача, семь периодов, объёмы выборок, seed и пределы ресурсов. Для Coveo не используется. |
+| [feature_schema.json](/configs/feature_schema.json) | Состав 93 столбцов Э3: порядок, типы, формулы, маски, преобразования и происхождение. `FeatureEngine` проверяет схему, `FeatureBatch` сохраняет её хеш. Это конкретный набор признаков, а не JSON Schema его формата. |
 | [ranker_recipe.json](/configs/ranker_recipe.json) | Закреплённые параметры LightGBM первого запуска. Валидатор сверяет с ними паспорт; обучение реализуется на Э4. |
 | [test_registry.json](/configs/test_registry.json) | Соответствие требований тестам и независимым эталонам. Не запускает тесты и не хранит их результаты. |
 
 Правила допуска задаёт [валидатор](/src/coveo_recsys/config/manifest.py) по
 [ТЗ §15](/documents/implementation_spec.md#15-тестирование-и-прослеживаемость); в реестре они не дублируются.
+
+`features build` принимает настройки конкретного запуска: закреплённые подготовку
+и исторический пакет, путь схемы, `RetrievalConfig` и пределы ресурсов. Пока команда
+работает только с тестовым B; настройка не открывает реальные периоды до Э1-10.
 
 Исходные CSV, результаты запусков и секреты здесь не хранятся. CSV находятся в
 `data/01_raw/`, результаты — в `runs/<run_id>/`; оба каталога исключены из Git.
@@ -43,3 +48,32 @@ C_select — до 25 марта, E — до 1 апреля, D — до 15 апр
 Границы слева включены, справа исключены. Остальные периоды имеют `sample_size=0`
 и в этом запуске не готовятся. `coverage.gaps=[]` при `confirmed_at_ms=null`
 означает неизвестные разрывы, а не доказанное отсутствие разрывов.
+
+## Настройки признаков Э3
+
+Файл конкретного запуска хранится в `runs/`, например `runs/e3/features.json`.
+Пути ниже — от корня проекта; хеши заменяются фактическими SHA-256 указанных
+`reports/preparation.json` и `historical/package.json`. Оба входа пока должны
+иметь область `synthetic`.
+
+```json
+{
+  "preparation": {"path": "runs/test-prepared", "report_sha256": "<SHA-256>"},
+  "historical": {"path": "runs/test-historical", "package_sha256": "<SHA-256>"},
+  "feature_schema": "configs/feature_schema.json",
+  "retrieval": {},
+  "limits": {
+    "max_requests": 100,
+    "batch_size": 16,
+    "max_observed_skus": 1000,
+    "max_seconds": 300,
+    "max_memory_bytes": 2147483648,
+    "max_result_bytes": 67108864
+  }
+}
+```
+
+Пустой `retrieval` использует базовые параметры [RetrievalConfig](/src/coveo_recsys/contracts/retrieval.py).
+Если префикс содержит SKU вне исторического каталога, добавляется `metadata_path`
+к той же закреплённой поставке метаданных. Она читается один раз для выбранных SKU,
+а не на каждый запрос. Превышение предела вызывает отказ, не усечение набора.

@@ -1,4 +1,4 @@
-"""Команды подготовки и исторического пакета; обучение ещё не реализовано."""
+"""Подготовка, исторический пакет и признаки; обучение ещё не реализовано."""
 
 import argparse
 import json
@@ -74,8 +74,14 @@ def _parser() -> argparse.ArgumentParser:
     historical_build.add_argument("--config", type=Path, required=True)
     historical_build.add_argument("--run-dir", type=Path, required=True)
     historical_build.add_argument("--run-id", required=True)
+    features = commands.add_parser("features", help="Кандидаты и признаки на тестовых наборах")
+    feature_actions = features.add_subparsers(dest="action", required=True)
+    feature_build = feature_actions.add_parser("build")
+    feature_build.add_argument("--config", type=Path, required=True)
+    feature_build.add_argument("--run-dir", type=Path, required=True)
+    feature_build.add_argument("--run-id", required=True)
+    feature_build.add_argument("--period", choices=("B",), required=True)
     for name in (
-        "features",
         "train",
         "replay",
         "select",
@@ -122,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
             reconfigure(encoding="utf-8")
     parser = _parser()
     args = parser.parse_args(argv)
-    if args.command not in {"environment", "manifest", "data", "historical"}:
+    if args.command not in {"environment", "manifest", "data", "historical", "features"}:
         print(f"Команда {args.command} ещё не реализована", file=sys.stderr)
         return 2
     try:
@@ -136,6 +142,18 @@ def main(argv: list[str] | None = None) -> int:
 
             try:
                 result = run_historical(args.project_root, args.config, args.run_dir, args.run_id)
+            except KeyboardInterrupt:
+                _emit({"status": "failed", "reason": "interrupted"})
+                return 130
+            _emit(result)
+            return 0
+        if args.command == "features":
+            from coveo_recsys.cli.features import run_features
+
+            try:
+                result = run_features(
+                    args.project_root, args.config, args.run_dir, args.run_id, period=args.period
+                )
             except KeyboardInterrupt:
                 _emit({"status": "failed", "reason": "interrupted"})
                 return 130

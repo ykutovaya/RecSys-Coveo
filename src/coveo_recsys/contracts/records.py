@@ -316,6 +316,25 @@ class SourceResult(Record):
 
 
 @dataclass(frozen=True, slots=True)
+class SourceEvidence(Record):
+    sku: str
+    source: str
+    anchor_sku: str | None
+    score: float
+    support: int | None
+    context_id: str | None
+    space_version: str | None
+
+    def __post_init__(self) -> None:
+        Record.__post_init__(self)
+        id_bytes(self.source)
+        if self.anchor_sku is not None:
+            id_bytes(self.anchor_sku)
+        if self.support is not None:
+            require_int64(self.support, nonnegative=True)
+
+
+@dataclass(frozen=True, slots=True)
 class CandidateResult(Record):
     request_id: str
     sources: tuple[SourceResult, ...]
@@ -323,11 +342,14 @@ class CandidateResult(Record):
     origins: tuple[tuple[str, tuple[str, ...]], ...]
     branch: Branch
     reasons: tuple[str, ...]
+    evidence: tuple[SourceEvidence, ...] = ()
 
     def __post_init__(self) -> None:
         Record.__post_init__(self)
         if len(self.skus) != len(set(self.skus)):
             raise InputValidationError("Повтор SKU в кандидатах")
+        if any(item.sku not in self.skus for item in self.evidence):
+            raise InputValidationError("Опора вне кандидатов выбранной ветви")
 
 
 @dataclass(frozen=True, slots=True)

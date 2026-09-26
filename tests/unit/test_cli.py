@@ -55,6 +55,25 @@ def test_historical_build_has_explicit_inputs():
     assert str(args.config).replace("\\", "/") == "configs/coveo_historical.json"
 
 
+def test_features_build_has_explicit_period_and_inputs():
+    args = _parser().parse_args(
+        [
+            "features",
+            "build",
+            "--config",
+            "features.json",
+            "--run-dir",
+            "runs/e3",
+            "--run-id",
+            "e3",
+            "--period",
+            "B",
+        ]
+    )
+    assert args.action == "build" and args.period == "B"
+    assert str(args.config) == "features.json"
+
+
 def test_environment_command(capsys):
     assert main(["environment"]) == 0
     result = json.loads(capsys.readouterr().out)

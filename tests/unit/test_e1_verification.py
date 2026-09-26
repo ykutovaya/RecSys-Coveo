@@ -11,14 +11,20 @@ def test_implemented_checks_keep_partial_coverage_and_existing_test_paths():
     checks = registry["implemented_checks"]
     assert set(checks) == {
         "B01.data",
+        "B01.features",
         "B02.context",
+        "B02.features",
         "B03.data",
         "B04.graph",
         "B05.content",
         "B05.numerics",
+        "B05.features",
         "B06",
+        "B07.retrieval",
+        "B08.retrieval",
         "B09",
         "B10.periods",
+        "B10.features",
         "B13.preparation",
     }
     for check in checks.values():
@@ -33,6 +39,12 @@ def test_implemented_checks_keep_partial_coverage_and_existing_test_paths():
         "B06",
         "B09",
         "B10.periods",
+        "B01.features",
+        "B02.features",
+        "B05.features",
+        "B07.retrieval",
+        "B08.retrieval",
+        "B10.features",
     ):
         assert checks[name]["complete_test"] is False
         assert checks[name]["remaining"]

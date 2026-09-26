@@ -36,6 +36,60 @@
     "EXPL01"
   ],
   "implemented_checks": {
+    "B01.features": {
+      "test_id": "B01",
+      "part": "features",
+      "complete_test": false,
+      "paths": ["tests/unit/test_e3_scores.py", "tests/unit/test_e3_boundaries.py", "tests/integration/test_e3_context.py"],
+      "reference_paths": ["tests/reference/e3_features_oracle.py"],
+      "coverage": "Срез пакета, полная последняя группа, независимость отбора и признаков от будущих событий и времени доступности",
+      "remaining": "Повтор на фактических входах Э1-10"
+    },
+    "B02.features": {
+      "test_id": "B02",
+      "part": "features",
+      "complete_test": false,
+      "paths": ["tests/unit/test_e3_scores.py", "tests/unit/test_e3_retrieval.py", "tests/integration/test_e3_context.py"],
+      "reference_paths": ["tests/reference/e3_retrieval_oracle.py"],
+      "coverage": "Последний поиск, возраст и совместимость пространства; отбор и признаки не зависят от поисковой выдачи и кликов",
+      "remaining": "Повтор на полном ответе с ранжировщиком"
+    },
+    "B05.features": {
+      "test_id": "B05",
+      "part": "features",
+      "complete_test": false,
+      "paths": ["tests/unit/test_e3_features.py", "tests/properties/test_e3_features_properties.py", "tests/integration/test_e3_context.py"],
+      "reference_paths": ["tests/reference/e3_features_oracle.py"],
+      "coverage": "Все 93 столбца, маски, кратности, нулевые группы; совпадение пакетного и последовательного расчётов",
+      "remaining": "Производные и LightGBM — Э4"
+    },
+    "B07.retrieval": {
+      "test_id": "B07",
+      "part": "retrieval",
+      "complete_test": false,
+      "paths": ["tests/unit/test_e3_retrieval.py", "tests/properties/test_e3_retrieval_properties.py"],
+      "reference_paths": ["tests/reference/e3_retrieval_oracle.py"],
+      "coverage": "Точный Top_m, квоты, допустимость, заполнение и отдельная резервная ветвь",
+      "remaining": "Выбор и доставка ответа, цепочка и разложение охвата — Э5–Э6"
+    },
+    "B08.retrieval": {
+      "test_id": "B08",
+      "part": "retrieval",
+      "complete_test": false,
+      "paths": ["tests/unit/test_e3_retrieval.py", "tests/unit/test_e3_features.py", "tests/properties/test_e3_retrieval_properties.py"],
+      "reference_paths": ["tests/reference/e3_retrieval_oracle.py"],
+      "coverage": "Несколько происхождений, балл вне квоты, обратные ранги, удаление источника без заполнения",
+      "remaining": "Доставка и знаменатели — Э5–Э6"
+    },
+    "B10.features": {
+      "test_id": "B10",
+      "part": "features",
+      "complete_test": false,
+      "paths": ["tests/unit/test_e3_boundaries.py", "tests/integration/test_e3_pipeline.py", "tests/integration/test_e3_integrity.py"],
+      "reference_paths": ["tests/reference/e3_features_oracle.py"],
+      "coverage": "Признаки не читают цели и закрытые периоды; реальный B запрещён до Э1-10, несовместимые пакеты и повторы отвергаются",
+      "remaining": "Ранжировщик и вариант без метаданных"
+    },
     "B04.graph": {
       "test_id": "B04",
       "part": "graph",
@@ -59,7 +113,7 @@
       ],
       "reference_paths": ["tests/reference/e2_content_oracle.py"],
       "coverage": "Раздельные модальности, маски, словарь A_G и порядковая цена",
-      "remaining": "Признаки Э3, производные и LightGBM Э4"
+      "remaining": "Производные и LightGBM Э4"
     },
     "B01.data": {
       "test_id": "B01",
@@ -144,14 +198,15 @@
       "paths": [
         "tests/unit/test_manifest_protocol.py",
         "tests/unit/test_e2_statistics.py",
-        "tests/properties/test_e2_statistics_properties.py"
+        "tests/properties/test_e2_statistics_properties.py",
+        "tests/unit/test_e3_features.py"
       ],
       "reference_paths": [
         "tests/reference/manifest_cases.py",
         "tests/reference/e2_statistics_oracle.py"
       ],
-      "coverage": "Покупочная частота запрещена в паспорте и не рассчитывается в исторических статистиках",
-      "remaining": "Отсутствие столбца покупочной частоты в схеме признаков — Э3"
+      "coverage": "Покупочная частота запрещена в паспорте, исторических статистиках и конкретной схеме признаков; счётчик зарегистрированных покупок сохранён отдельно",
+      "remaining": "Проверка фактических артефактов на Э1-10"
     },
     "B10.periods": {
       "test_id": "B10",
