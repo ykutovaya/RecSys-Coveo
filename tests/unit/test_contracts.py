@@ -12,13 +12,14 @@ from coveo_recsys.contracts.records import (
     CartItem,
     CartState,
     EventType,
+    FeatureBatch,
     PrefixSnapshot,
     RawEvent,
     RequestContext,
     SearchPayload,
     StateTransition,
 )
-from coveo_recsys.contracts.serialization import from_json, record_schema, to_json
+from coveo_recsys.contracts.serialization import from_json, record_schema, record_version, to_json
 from coveo_recsys.contracts.training import MetricResult, SessionEvaluation, TargetRecord
 
 
@@ -55,6 +56,71 @@ def test_roundtrip_and_immutable_prefix():
     assert not {"targets", "labels", "b_s", "session_request_count"} & {
         f.name for f in dataclasses.fields(RequestContext)
     }
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        context(),
+        SearchPayload((0.0, -0.0, 1e-300, 1e300), "поиск"),
+        FeatureBatch(
+            "request",
+            ("e\u0301", "é"),
+            ("score",),
+            ("category",),
+            ((-0.0,), (0.125,)),
+            ((-(2**63),), (2**63 - 1,)),
+            ((False, True), (True, False)),
+            "a" * 64,
+        ),
+        TargetRecord("request", ("sku",), OutcomeStatus.KNOWN, 100),
+    ],
+)
+def test_json_bytes_match_asdict_encoding(item):
+    expected = json.dumps(
+        {
+            "contract_version": record_version(type(item)),
+            "type": type(item).__name__,
+            "data": dataclasses.asdict(item),
+        },
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert to_json(item) == expected
+    assert from_json(expected, type(item)) == item
+
+
+@pytest.mark.parametrize("bad", [True, 1, float("nan"), float("inf"), "1"])
+def test_nested_float_validation_does_not_coerce_values(bad):
+    with pytest.raises(InputValidationError):
+        SearchPayload((bad,), None)
+
+
+def test_serialization_revalidates_values_after_an_earlier_success():
+    item = SearchPayload((0.5,), None)
+    to_json(item)
+    object.__setattr__(item, "vector", (True,))
+    with pytest.raises(InputValidationError):
+        to_json(item)
+
+
+@pytest.mark.parametrize("value", [True, float("nan"), float("inf"), "1", 1])
+def test_nested_float_json_accepts_only_finite_numbers(value):
+    payload = json.dumps(
+        {
+            "contract_version": CONTRACT_VERSION,
+            "type": "SearchPayload",
+            "data": {"vector": [value], "reason": None},
+        }
+    ).encode()
+    if type(value) is int:
+        result = from_json(payload, SearchPayload)
+        assert result == SearchPayload((1.0,), None)
+        assert type(result.vector[0]) is float
+    else:
+        with pytest.raises(InputValidationError):
+            from_json(payload, SearchPayload)
 
 
 @pytest.mark.parametrize("bad", [True, 1.5, 2**63, -(2**63) - 1, "1700000000000"])

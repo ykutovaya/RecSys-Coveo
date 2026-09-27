@@ -6,11 +6,15 @@ import math
 import re
 import types
 from enum import Enum
-from typing import Any, TypeVar, cast, get_args, get_origin, get_type_hints
+from functools import cache
+from typing import Any, Callable, TypeVar, cast, get_args, get_origin, get_type_hints
 
 from .common import CONTRACT_VERSION, InputValidationError, id_bytes, require_int64
 
 T = TypeVar("T")
+
+
+_type_hints: Callable[[Any], dict[str, Any]] = cache(get_type_hints)
 
 
 def record_version(record_type: type[Any]) -> str:
@@ -34,6 +38,25 @@ def record_version(record_type: type[Any]) -> str:
 
 
 def _convert(value: Any, expected: Any, *, decode: bool = False) -> Any:
+    if expected is int:
+        return require_int64(value)
+    if expected is float:
+        try:
+            finite = math.isfinite(value) if type(value) in (int, float) else False
+        except OverflowError:
+            finite = False
+        if type(value) not in ((int, float) if decode else (float,)) or not finite:
+            raise InputValidationError("Ожидалось конечное число FP64")
+        return float(value)
+    if expected is str or expected is bool:
+        if type(value) is not expected:
+            raise InputValidationError(f"Ожидалось {expected}")
+        if expected is str:
+            try:
+                value.encode("utf-8", errors="strict")
+            except UnicodeError as exc:
+                raise InputValidationError("Строка содержит некорректный UTF-8") from exc
+        return value
     origin, args = get_origin(expected), get_args(expected)
     if origin is types.UnionType:
         for candidate in args:
@@ -50,21 +73,25 @@ def _convert(value: Any, expected: Any, *, decode: bool = False) -> Any:
         if type(value) is not (list if decode else tuple):
             raise InputValidationError("Ожидалась неизменяемая последовательность")
         if len(args) == 2 and args[1] is Ellipsis:
-            return tuple(_convert(v, args[0], decode=decode) for v in value)
+            if decode:
+                return tuple(_convert(v, args[0], decode=True) for v in value)
+            for item in value:
+                _convert(item, args[0])
+            return value
         if len(value) != len(args):
             raise InputValidationError("Неверное число элементов")
-        return tuple(_convert(v, t, decode=decode) for v, t in zip(value, args, strict=True))
+        if decode:
+            return tuple(_convert(v, t, decode=True) for v, t in zip(value, args, strict=True))
+        for item, item_type in zip(value, args, strict=True):
+            _convert(item, item_type)
+        return value
     if dataclasses.is_dataclass(expected):
         if decode:
-            if not isinstance(value, dict) or set(value) != set(get_type_hints(expected)):
+            hints = _type_hints(expected)
+            if not isinstance(value, dict) or set(value) != set(hints):
                 raise InputValidationError("Неизвестные или отсутствующие поля")
             factory = cast(Any, expected)
-            return factory(
-                **{
-                    k: _convert(value[k], t, decode=True)
-                    for k, t in get_type_hints(expected).items()
-                }
-            )
+            return factory(**{k: _convert(value[k], t, decode=True) for k, t in hints.items()})
         if type(value) is not expected:
             raise InputValidationError("Неверный тип записи")
         return value
@@ -74,28 +101,13 @@ def _convert(value: Any, expected: Any, *, decode: bool = False) -> Any:
         if type(value) is not expected:
             raise InputValidationError("Неверный тип перечисления")
         return value
-    if expected is int:
-        return require_int64(value)
-    if expected is float:
-        try:
-            finite = math.isfinite(value) if type(value) in (int, float) else False
-        except OverflowError:
-            finite = False
-        if type(value) not in ((int, float) if decode else (float,)) or not finite:
-            raise InputValidationError("Ожидалось конечное число FP64")
-        return float(value)
     if type(value) is not expected:
         raise InputValidationError(f"Ожидалось {expected}")
-    if expected is str:
-        try:
-            value.encode("utf-8", errors="strict")
-        except UnicodeError as exc:
-            raise InputValidationError("Строка содержит некорректный UTF-8") from exc
     return value
 
 
 def validate_record(value: Any) -> None:
-    for name, expected in get_type_hints(type(value)).items():
+    for name, expected in _type_hints(type(value)).items():
         item = getattr(value, name)
         _convert(item, expected)
         if item is not None and (name.endswith("_id") or name == "sku"):
@@ -109,6 +121,12 @@ def validate_record(value: Any) -> None:
             raise InputValidationError("Ожидался SHA-256 в нижнем регистре")
 
 
+def _record_data(value: Any) -> dict[str, Any]:
+    if not dataclasses.is_dataclass(value) or isinstance(value, type):
+        raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+    return {field.name: getattr(value, field.name) for field in dataclasses.fields(value)}
+
+
 def to_json(record: Any) -> bytes:
     if not dataclasses.is_dataclass(record):
         raise InputValidationError("Ожидалась запись")
@@ -117,8 +135,9 @@ def to_json(record: Any) -> bytes:
         {
             "contract_version": record_version(type(record)),
             "type": type(record).__name__,
-            "data": dataclasses.asdict(cast(Any, record)),
+            "data": record,
         },
+        default=_record_data,
         ensure_ascii=False,
         allow_nan=False,
         separators=(",", ":"),
@@ -165,7 +184,7 @@ def record_schema(record_type: type[Any]) -> dict[str, Any]:
                 "maxItems": len(args),
             }
         if dataclasses.is_dataclass(expected):
-            hints = get_type_hints(expected)
+            hints = _type_hints(expected)
             return {
                 "type": "object",
                 "additionalProperties": False,

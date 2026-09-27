@@ -13,7 +13,7 @@ from coveo_recsys.contracts.retrieval import RetrievalConfig
 from coveo_recsys.numerics import checked_subtract
 
 from .scores import RetrievalIndex, _check_context
-from .sources import exact_top_m
+from .sources import _top_m_in_order
 
 
 def fallback(
@@ -32,8 +32,12 @@ def fallback(
             i = index.positions[sku]
             recent[i] = -checked_subtract(context.t_q, timestamp) / 1000.0
             recent_mask[i] = True
-    selected = exact_top_m(
-        catalog, recent, eligible & recent_mask, config.max_candidates, block_size=config.block_size
+    selected = _top_m_in_order(
+        index._sku_order,
+        recent,
+        eligible & recent_mask,
+        config.max_candidates,
+        block_size=config.block_size,
     )
     recent_reason = None if context.prefix.last_views else "empty_history"
     sources = [
@@ -49,8 +53,8 @@ def fallback(
     remaining = eligible.copy()
     remaining[list(selected)] = False
     popularity = index.package.statistics.popularity
-    fill = exact_top_m(
-        catalog,
+    fill = _top_m_in_order(
+        index._sku_order,
         popularity,
         remaining,
         config.max_candidates - len(selected),

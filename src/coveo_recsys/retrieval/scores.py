@@ -54,6 +54,11 @@ class RetrievalIndex:
             raise InputValidationError("Нужен хеш закреплённого каталога")
         self.package = package
         self.catalog_sha256 = catalog_sha256
+        keys = tuple(id_bytes(sku) for sku in package.catalog.skus)
+        if len(set(keys)) != len(keys):
+            raise InputValidationError("Повтор SKU в точном отборе")
+        self._sku_order = np.array(sorted(range(len(keys)), key=keys.__getitem__), dtype=np.intp)
+        self._sku_order.flags.writeable = False
         self.positions = {sku: i for i, sku in enumerate(package.catalog.skus)}
         self._rows: dict[str, ItemContent] = {}
         self._edges: dict[str, dict[str, dict[int, tuple[float, int]]]] = {}

@@ -23,10 +23,13 @@ REPORT = "reports/preparation.json"
 
 
 @pytest.fixture
-def actual_inputs(tmp_path):
+def actual_inputs(tmp_path, request):
     source = tmp_path / "input"
     source.mkdir()
     profile = json.loads((ROOT / "configs/coveo_supply_v1.json").read_bytes())
+    base = from_json((ROOT / "configs/synthetic_preparation.json").read_bytes(), PreparationPlan)
+    period, sample_size = getattr(request, "param", ("A_G", 2))
+    offset = next(p.start_ms for p in base.periods if p.name == period)
     vector = json.dumps([1.0] + [0.0] * 49)
     selected = sorted(("session-a", "session-b", "session-c"), key=session_key)[:2]
     rows = {
@@ -46,6 +49,11 @@ def actual_inputs(tmp_path):
         "sku_to_content.csv": [["sku-a", vector, "category", vector, "3.0"]],
     }
     for name, values in rows.items():
+        if name != "sku_to_content.csv":
+            timestamp_index = profile["files"][name]["columns"].index("server_timestamp_epoch_ms")
+            for row in values:
+                if row[0] != "closed-period":
+                    row[timestamp_index] += offset
         path = source / name
         with path.open("w", encoding="utf-8", newline="") as stream:
             writer = csv.writer(stream)
@@ -55,14 +63,15 @@ def actual_inputs(tmp_path):
         profile["files"][name]["expected_size_bytes"] = path.stat().st_size
     profile_path = tmp_path / "profile.json"
     profile_path.write_text(json.dumps(profile), encoding="utf-8")
-    base = from_json((ROOT / "configs/synthetic_preparation.json").read_bytes(), PreparationPlan)
     plan = replace(
         base,
         scope="actual",
         source_namespace="coveo-sigir-1.0.0",
         task=replace(base.task, query_dimension=50),
         coverage=replace(base.coverage, source_namespace="coveo-sigir-1.0.0", confirmed_at_ms=None),
-        periods=tuple(replace(p, sample_size=2 if p.name == "A_G" else 0) for p in base.periods),
+        periods=tuple(
+            replace(p, sample_size=sample_size if p.name == period else 0) for p in base.periods
+        ),
         diagnostic_sessions=0,
     )
     plan_path = tmp_path / "plan.json"
@@ -144,6 +153,75 @@ def test_actual_selection_uses_admission_and_keeps_unknown_empty_targets(
     assert result["composition"]["target_window"]["sessions_by_target_size"] == {"0": 1, "2": 1}
     assert not (destination / "diagnostic").exists() and not (destination / "cohort").exists()
     assert read_report(destination)["status"] == "completed"
+
+
+@pytest.mark.parametrize("actual_inputs", [("B", 3)], indirect=True)
+def test_actual_b_prepares_full_sessions_with_first_requests_and_separate_targets(
+    actual_inputs, tmp_path
+):
+    destination = tmp_path / "run"
+    result = run(actual_inputs, destination)
+    store = LocalArtifactStore(destination)
+    plan = from_json(actual_inputs[2].read_bytes(), PreparationPlan)
+    period = next(p for p in plan.periods if p.name == "B")
+    assert result["selection"]["B"] == sorted(
+        ("session-a", "session-b", "session-c"), key=session_key
+    )
+    assert all(not ids for name, ids in result["selection"].items() if name != "B")
+    assert set(result["tables"]) == {
+        "preparation/sessions.parquet",
+        "canonical/B.parquet",
+        "datasets/B/prefixes.parquet",
+        "datasets/B/targets.parquet",
+    }
+    sessions = records(store, "preparation/sessions.parquet", SessionRecord)
+    assert all(s.period == "B" and s.admitted and s.telemetry_complete is None for s in sessions)
+    assert sorted(s.last_event_ms for s in sessions) == [
+        period.start_ms + 100,
+        period.start_ms + 180,
+        period.start_ms + 210_000_000,
+    ]
+    blocks = records(store, "canonical/B.parquet", CanonicalBlock)
+    assert sum(len(event.origins) for block in blocks for event in block.events) == 9
+    assert max(block.event_time_ms for block in blocks) > period.end_ms
+    requests = records(store, "datasets/B/prefixes.parquet", PreparedRequest)
+    assert len(requests) == len(sessions) == result["request_count"] == 3
+    assert all(
+        request.ordinal == 1 and request.t_q == period.start_ms + 100 for request in requests
+    )
+    assert all(
+        len(request.prefix.blocks) == 1
+        and all(event.event_type == "detail" for event in request.prefix.blocks[0].events)
+        for request in requests
+    )
+    targets = records(store, "datasets/B/targets.parquet", TargetRecord)
+    assert {target.request_id for target in targets} == {request.request_id for request in requests}
+    assert sorted(target.purchases for target in targets) == [(), ("sku-b",), ("sku-b", "sku-c")]
+    empty_target = next(target for target in targets if not target.purchases)
+    assert empty_target.status == OutcomeStatus.UNKNOWN and empty_target.reason
+
+
+@pytest.mark.parametrize("period", ["A_N", "C_smoke", "C_select", "E", "D"])
+def test_actual_preparation_rejects_nonzero_closed_period(actual_inputs, tmp_path, period):
+    plan_path = actual_inputs[2]
+    plan = from_json(plan_path.read_bytes(), PreparationPlan)
+    plan_path.write_bytes(
+        to_json(
+            replace(
+                plan,
+                periods=tuple(
+                    replace(p, sample_size=1) if p.name == period else p for p in plan.periods
+                ),
+            )
+        )
+    )
+    destination = tmp_path / "run"
+    with pytest.raises(
+        InputValidationError, match="Реальная подготовка разрешена только для A_G и B"
+    ):
+        run(actual_inputs, destination)
+    assert not (destination / REPORT).exists()
+    assert not list(destination.rglob("*.parquet"))
 
 
 def test_composition_counts_canonical_actions_sessions_and_target_window(actual_inputs, tmp_path):

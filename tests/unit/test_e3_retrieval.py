@@ -54,6 +54,63 @@ def test_top_m_rejects_nonfinite_measurable_scores(value):
         exact_top_m(("a",), np.array([value]), np.array([True]), 1)
 
 
+@pytest.mark.parametrize(
+    "ids,values,mask,limit,block",
+    [
+        (("a", "a"), [1.0, 2.0], [True, True], 1, 1),
+        (("",), [1.0], [True], 1, 1),
+        (("\ud800",), [1.0], [True], 1, 1),
+        (("a",), [1.0, 2.0], [True, True], 1, 1),
+        (("a",), [1.0], [True, False], 1, 1),
+        (("a",), [1.0], [1], 1, 1),
+        (("a",), [1.0], [True], True, 1),
+        (("a",), [1.0], [True], -1, 1),
+        (("a",), [1.0], [True], 1, 0),
+        (("a",), [1.0], [True], 1, True),
+    ],
+)
+def test_top_m_preserves_input_checks(ids, values, mask, limit, block):
+    with pytest.raises(InputValidationError):
+        exact_top_m(ids, np.array(values), np.array(mask), limit, block_size=block)
+
+
+@pytest.mark.parametrize("limit", [0, 1, 2, 10])
+def test_top_m_masks_nonfinite_values_and_preserves_utf8_nul_suffix_order(limit):
+    ids = ("a\0", "a", "я", "z")
+    actual = exact_top_m(
+        ids, np.array([-0.0, 0.0, np.nan, np.inf]), np.array([True, True, False, False]), limit
+    )
+    assert tuple(ids[i] for i in actual) == ("a", "a\0")[:limit]
+    with pytest.raises(NumericError):
+        exact_top_m(("a",), np.array([np.nan]), np.array([True]), limit)
+
+
+def test_sources_reuse_validated_catalog_order_without_reencoding_ids(monkeypatch):
+    import coveo_recsys.retrieval.sources as source_module
+
+    idx, ctx, cfg = RetrievalIndex(package(), CATALOG_HASH), context(), config(description=1)
+    calls = []
+    original = source_module.id_bytes
+
+    def counted(sku):
+        calls.append(sku)
+        return original(sku)
+
+    monkeypatch.setattr(source_module, "id_bytes", counted)
+    expected = retrieve(ctx, idx, cfg), retrieve_fallback(ctx, idx, cfg)
+    assert (retrieve(ctx, idx, cfg), retrieve_fallback(ctx, idx, cfg)) == expected
+    assert calls == []
+
+
+@pytest.mark.parametrize("value", [np.nan, np.inf, -np.inf])
+def test_cached_catalog_does_not_skip_score_validation_for_zero_quota(value):
+    idx, ctx, cfg = RetrievalIndex(package(), CATALOG_HASH), context(), config()
+    scores = score_request(ctx, idx, cfg)
+    scores.values["popularity"][0] = value
+    with pytest.raises(NumericError):
+        source_results(scores)
+
+
 def test_source_lists_apply_quotas_without_losing_measurable_scores():
     idx, ctx, cfg = (
         RetrievalIndex(package(), CATALOG_HASH),

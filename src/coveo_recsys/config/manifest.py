@@ -549,12 +549,19 @@ class _Validation:
             )
         self.calendar()
         estimate = self.m["inference"]["primary_estimate_type"]
+        precision_required = self.index >= STAGES.index(
+            self.template["stage_validation"]["precision_required_by_stage"]
+        )
         for path in self.template["stage_validation"]["primary_estimate_required_fields"][estimate]:
-            if path == "selection.primary_comparison" and self.index < 4:
-                continue
-            self.need(path)
-        for path in ("inference.dependence_multiplier", "inference.pilot_provenance"):
-            self.need(path)
+            if path == "selection.primary_comparison":
+                required = self.index >= 4
+            else:
+                required = path == "inference.primary_policy_config_id" or precision_required
+            if required:
+                self.need(path)
+        if precision_required:
+            for path in ("inference.dependence_multiplier", "inference.pilot_provenance"):
+                self.need(path)
         if estimate == "paired" and self.index >= 4:
             pair = self.m["selection"]["primary_comparison"]
             if pair and pair["control"] == pair["treatment"]:

@@ -15,7 +15,13 @@ from tests.unit.test_e3_retrieval import context
 
 @seed(17)
 @given(
-    st.lists(st.tuples(st.integers(-10, 10), st.booleans()), max_size=80),
+    st.lists(
+        st.tuples(
+            st.one_of(st.integers(-10, 10), st.floats(allow_nan=False, allow_infinity=False)),
+            st.booleans(),
+        ),
+        max_size=80,
+    ),
     st.integers(0, 90),
     st.integers(1, 20),
 )

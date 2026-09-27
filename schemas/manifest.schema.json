@@ -228,7 +228,7 @@
                     },
                     "period_A_N": {
                       "type": "integer",
-                      "minimum": 1
+                      "minimum": 0
                     },
                     "period_B": {
                       "type": "integer",
@@ -236,19 +236,19 @@
                     },
                     "period_C_smoke": {
                       "type": "integer",
-                      "minimum": 1
+                      "minimum": 0
                     },
                     "period_C_select": {
                       "type": "integer",
-                      "minimum": 1
+                      "minimum": 0
                     },
                     "period_E": {
                       "type": "integer",
-                      "minimum": 1
+                      "minimum": 0
                     },
                     "period_D": {
                       "type": "integer",
-                      "minimum": 1
+                      "minimum": 0
                     }
                   },
                   "required": [
@@ -2826,6 +2826,9 @@
           "type": "string",
           "minLength": 1
         },
+        "precision_required_by_stage": {
+          "const": "pre_D"
+        },
         "primary_estimate_required_fields": {
           "type": "object",
           "properties": {
@@ -2855,6 +2858,7 @@
       },
       "required": [
         "contract",
+        "precision_required_by_stage",
         "primary_estimate_required_fields"
       ],
       "additionalProperties": false

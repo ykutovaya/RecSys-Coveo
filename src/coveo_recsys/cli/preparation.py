@@ -836,8 +836,10 @@ class Preparation:
             raise InputValidationError(
                 "Технический режим не является подготовкой observed_purchases_v1"
             )
-        if plan.scope == "actual" and any(p.sample_size for p in plan.periods[1:]):
-            raise InputValidationError("До Э2 реальная подготовка ограничена A_G")
+        if plan.scope == "actual" and any(
+            p.sample_size and p.name not in {"A_G", "B"} for p in plan.periods
+        ):
+            raise InputValidationError("Реальная подготовка разрешена только для A_G и B")
         if (
             plan.source_namespace != profile.namespace
             or plan.task.query_dimension != profile.dimensions["query"]

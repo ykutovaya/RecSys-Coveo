@@ -539,6 +539,7 @@
   "stage": "preflight",
   "stage_validation": {
     "contract": "app:run-stages",
+    "precision_required_by_stage": "pre_D",
     "primary_estimate_required_fields": {
       "single_policy": [
         "inference.primary_policy_config_id",

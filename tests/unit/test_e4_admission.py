@@ -157,6 +157,19 @@ def test_actual_gate_uses_real_validator_and_keeps_shortfalls_and_old_ag_code(ad
     assert require_training_admission(ROOT, admission, **kwargs) == admission["manifest_sha256"]
 
 
+def test_actual_training_admission_allows_pending_precision_plan(admitted):
+    admission, kwargs, manifest, save, *_ = admitted
+    manifest["inference"].update(
+        single_policy_half_width_fraction=None,
+        planned_outcome_variance=None,
+        dependence_multiplier=None,
+        pilot_provenance=None,
+    )
+    manifest["inference"]["dependence_assumptions"]["single_policy_hit"] = None
+    save()
+    assert require_training_admission(ROOT, admission, **kwargs) == admission["manifest_sha256"]
+
+
 def test_synthetic_pair_needs_no_actual_admission(admitted):
     _, kwargs, *_ = admitted
     kwargs["prepared"] = {"scope": "synthetic"}

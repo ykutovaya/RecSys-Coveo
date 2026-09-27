@@ -1,5 +1,7 @@
 """Пакетные признаки B; фактические данные требуют допуска Э1-10."""
 
+import json
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import asdict
@@ -200,20 +202,45 @@ def run_features(
         scope=prepared["scope"],
         audit=audit.append,
     )
+    stage = "prefixes"
+    processed = 0
+    total_requests = prepared["tables"]["datasets/B/prefixes.parquet"]["rows"]
+    last_progress = 0.0
+    last_stage: str | None = None
 
     def check_budget(extra_bytes: int = 0) -> None:
+        nonlocal last_progress, last_stage
+        elapsed = time.monotonic() - started
         peak = _peak_memory()["peak_process_memory_bytes"]
         size = sum(path.stat().st_size for path in destination.rglob("*") if path.is_file())
         if (
-            time.monotonic() - started > limits["max_seconds"]
+            elapsed > limits["max_seconds"]
             or peak is None
             or peak > limits["max_memory_bytes"]
             or size + extra_bytes > limits["max_result_bytes"]
         ):
             raise InputValidationError("Превышен предел ресурсов Э3")
+        if stage != last_stage or elapsed - last_progress >= 30:
+            print(
+                json.dumps(
+                    {
+                        "step": "features",
+                        "stage": stage,
+                        "processed_requests": processed,
+                        "total_requests": total_requests,
+                        "elapsed_seconds": elapsed,
+                        "peak_process_memory_bytes": peak,
+                    }
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            last_progress = elapsed
+            last_stage = stage
 
     observed: set[str] = set()
     requests = 0
+    check_budget()
     for _, items in access.read("datasets/B/prefixes.parquet", PreparedRequest, purpose="prefix"):
         requests += len(items)
         if requests > limits["max_requests"]:
@@ -224,7 +251,10 @@ def run_features(
             )
         if len(observed) > limits["max_observed_skus"]:
             raise InputValidationError("Превышен предел наблюдаемых SKU")
+        processed = requests
         check_budget()
+    stage = "metadata"
+    check_budget()
     unknown = observed - set(package.catalog.skus)
     observed_records = {}
     if unknown:
@@ -250,6 +280,8 @@ def run_features(
         }
     index = RetrievalIndex(package, catalog_hash, observed_records)
     engine = FeatureEngine(index, schema, config)
+    stage = "features"
+    processed = 0
     check_budget()
     total_rows = 0
     with (
@@ -282,11 +314,14 @@ def run_features(
             main_writer.append(sid, main)
             reserve_writer.append(sid, reserve)
             feature_writer.append(sid, features)
+            processed += len(items)
             check_budget()
-    tables = {
-        path: table_info(destination / path, kind, period="B") for path, kind in TABLES.items()
-    }
+    stage = "validation"
     check_budget()
+    tables = {}
+    for path, kind in TABLES.items():
+        tables[path] = table_info(destination / path, kind, period="B")
+        check_budget()
     result = {
         "status": "completed",
         "identity": identity,
@@ -303,6 +338,7 @@ def run_features(
         before_publish()
     inputs_unchanged()
     output_tables_unchanged(tables)
+    stage = "publication"
     result.update(elapsed_seconds=time.monotonic() - started, **_peak_memory())
     encoded = canonical_json_bytes(result)
     check_budget(len(encoded))

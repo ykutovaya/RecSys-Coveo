@@ -1,7 +1,6 @@
 """Точные списки источников и минимальная расчётная опора."""
 
-from collections.abc import Iterator, Sequence
-from heapq import nsmallest
+from collections.abc import Sequence
 
 import numpy as np
 from numpy.typing import NDArray
@@ -28,23 +27,34 @@ def exact_top_m(
     block_size: int = 1024,
 ) -> tuple[int, ...]:
     """Индексы точного Top_m: убывание балла, затем UTF-8 ID."""
-    require_int64(m, nonnegative=True)
-    if require_int64(block_size, nonnegative=True) == 0:
-        raise InputValidationError("Порция должна быть положительной")
-    if values.shape != (len(skus),) or mask.shape != values.shape or mask.dtype != np.bool_:
-        raise InputValidationError("Баллы и маска не соответствуют каталогу")
     keys = tuple(id_bytes(sku) for sku in skus)
     if len(set(keys)) != len(keys):
         raise InputValidationError("Повтор SKU в точном отборе")
+    order = np.array(sorted(range(len(keys)), key=keys.__getitem__), dtype=np.intp)
+    return _top_m_in_order(order, values, mask, m, block_size=block_size)
+
+
+def _top_m_in_order(
+    sku_order: NDArray[np.intp],
+    values: NDArray[np.float64],
+    mask: NDArray[np.bool_],
+    m: int,
+    *,
+    block_size: int,
+) -> tuple[int, ...]:
+    """Порядок неизменного каталога проверен; баллы и маска проверяются каждый раз."""
+    require_int64(m, nonnegative=True)
+    if require_int64(block_size, nonnegative=True) == 0:
+        raise InputValidationError("Порция должна быть положительной")
+    if values.shape != (len(sku_order),) or mask.shape != values.shape or mask.dtype != np.bool_:
+        raise InputValidationError("Баллы и маска не соответствуют каталогу")
     if not np.isfinite(values[mask]).all():
         raise NumericError("Неконечный измеримый балл отбора")
-
-    def indices() -> Iterator[int]:
-        for start in range(0, len(skus), block_size):
-            for offset in np.flatnonzero(mask[start : start + block_size]):
-                yield start + int(offset)
-
-    return tuple(nsmallest(m, indices(), key=lambda i: (-float(values[i]), keys[i])))
+    if m == 0:
+        return ()
+    eligible = sku_order[mask[sku_order]]
+    ordered = np.argsort(-np.asarray(values[eligible], dtype=np.float64), kind="stable")
+    return tuple(int(i) for i in eligible[ordered[:m]])
 
 
 def source_results(scores: QueryScores) -> tuple[SourceResult, ...]:
@@ -55,8 +65,12 @@ def source_results(scores: QueryScores) -> tuple[SourceResult, ...]:
         mask = scores.eligible & scores.masks[source]
         if source in RELATIONS:
             mask &= scores.values[source] > 0
-        indices = exact_top_m(
-            skus, scores.values[source], mask, quota, block_size=scores.config.block_size
+        indices = _top_m_in_order(
+            scores.index._sku_order,
+            scores.values[source],
+            mask,
+            quota,
+            block_size=scores.config.block_size,
         )
         reason = scores.reasons[source]
         results.append(

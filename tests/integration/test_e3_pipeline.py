@@ -4,6 +4,7 @@ import json
 import shutil
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -117,6 +118,50 @@ def test_features_command_roundtrip_and_repeat(e3_settings, tmp_path, capsys):
     )
     assert json.loads(capsys.readouterr().out) == result
     assert all(read["purpose"] == "prefix" for read in result["reads"])
+
+
+@pytest.mark.parametrize("elapsed", [29.999, 30.0, 30.001])
+def test_feature_progress_is_throttled_and_distinguishes_final_checks(
+    e3_settings, tmp_path, monkeypatch, capsys, elapsed
+):
+    from coveo_recsys.cli import features
+
+    settings, _, _ = e3_settings
+    clock = [0.0]
+    monkeypatch.setattr(features, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    original_score = features.score_request
+
+    def score(*args, **kwargs):
+        clock[0] = elapsed
+        return original_score(*args, **kwargs)
+
+    monkeypatch.setattr(features, "score_request", score)
+    capsys.readouterr()
+    result = features.run_features(ROOT, settings, tmp_path / "features", "features", period="B")
+    captured = capsys.readouterr()
+    progress = [json.loads(line) for line in captured.err.splitlines()]
+    assert not captured.out
+    assert [item["stage"] for item in progress if item["stage"] != "features"] == [
+        "prefixes",
+        "metadata",
+        "validation",
+        "publication",
+    ]
+    computation = [item for item in progress if item["stage"] == "features"]
+    assert len(computation) == (2 if elapsed >= 30.0 else 1)
+    assert computation[0]["processed_requests"] == 0
+    if elapsed >= 30.0:
+        assert computation[1]["processed_requests"] == 1
+        assert computation[1]["elapsed_seconds"] == elapsed
+    assert all(
+        item["step"] == "features"
+        and item["total_requests"] == result["requests"] == 1
+        and 0 <= item["processed_requests"] <= 1
+        and item["peak_process_memory_bytes"] > 0
+        for item in progress
+    )
+    assert progress[-1]["processed_requests"] == 1
+    assert progress[-1]["elapsed_seconds"] == elapsed
 
 
 @pytest.mark.parametrize("period", ["A_G", "C_smoke", "C_select", "E", "D"])

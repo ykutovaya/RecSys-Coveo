@@ -13,7 +13,7 @@ from coveo_recsys.contracts.records import (
 from coveo_recsys.contracts.retrieval import SOURCES, RetrievalConfig
 
 from .scores import QueryScores, RetrievalIndex, score_request
-from .sources import exact_top_m, source_evidence, source_results
+from .sources import _top_m_in_order, source_evidence, source_results
 
 
 def retrieve(
@@ -42,8 +42,8 @@ def retrieve(
     for sku in origins:
         fill_mask[index.positions[sku]] = False
     catalog, popularity = index.package.catalog.skus, index.package.statistics.popularity
-    fill = exact_top_m(
-        catalog,
+    fill = _top_m_in_order(
+        index._sku_order,
         popularity,
         fill_mask,
         config.max_candidates - len(origins),

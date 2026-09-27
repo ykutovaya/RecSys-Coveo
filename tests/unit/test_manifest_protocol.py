@@ -114,6 +114,29 @@ def test_precision_threshold_is_a_positive_fraction(
     assert (not structure_issues(manifest)) is valid
 
 
+@pytest.mark.parametrize("scope", ["actual", "synthetic"])
+def test_preflight_allows_zero_session_counts_in_closed_periods(tmp_path: Path, scope: str) -> None:
+    manifest, _ = make_manifest_case(LocalArtifactStore(tmp_path), "preflight")
+    manifest["scope"] = scope
+    counts = manifest["dataset"]["session_sampling"]["session_count_by_period"]
+    counts.update({name: 1 if name in {"period_A_G", "period_B"} else 0 for name in counts})
+    assert not structure_issues(manifest)
+
+
+@pytest.mark.parametrize(
+    "period,count",
+    [(name, -1) for name in ("A_G", "A_N", "B", "C_smoke", "C_select", "E", "D")]
+    + [("A_G", 0), ("B", 0)],
+)
+def test_session_counts_reject_negative_sizes_and_empty_training_inputs(
+    tmp_path: Path, period: str, count: int
+) -> None:
+    manifest, _ = make_manifest_case(LocalArtifactStore(tmp_path), "preflight")
+    manifest["dataset"]["session_sampling"]["session_count_by_period"][f"period_{period}"] = count
+    issues = structure_issues(manifest)
+    assert any(issue.path == "dataset.session_sampling.session_count_by_period" for issue in issues)
+
+
 @pytest.mark.parametrize("config_id", ["gcs_rk_v2_7", "research_variant"])
 @pytest.mark.parametrize("penalty", [0, 1])
 def test_probability_dependent_diversity_is_disabled_for_every_recipe(
@@ -141,6 +164,67 @@ def test_first_training_does_not_require_future_metadata_or_intervals() -> None:
         row["test_id"] for row in required_checks(manifest, "post_training", operation="evaluate")
     }
     assert "B12" in evaluation
+
+
+@pytest.mark.parametrize("stage", ["preflight", "post_training", "pre_selection"])
+@pytest.mark.parametrize("estimate", ["single_policy", "paired"])
+def test_precision_planning_can_wait_until_pre_d(tmp_path: Path, stage: str, estimate: str) -> None:
+    store = LocalArtifactStore(tmp_path)
+    manifest, plans = make_manifest_case(store, stage)
+    manifest["inference"].update(
+        primary_estimate_type=estimate,
+        single_policy_half_width_fraction=None,
+        half_width_fraction=None,
+        planned_outcome_variance=None,
+        dependence_multiplier=None,
+        pilot_provenance=None,
+        dependence_assumptions={"single_policy_hit": None, "paired_hit": None},
+    )
+    result = validate_manifest(manifest, stage, store, plan_references=plans)
+    assert result.gate_passed, result.issues
+
+
+@pytest.mark.parametrize("estimate", ["single_policy", "paired"])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "half_width_fraction",
+        "planned_outcome_variance",
+        "dependence_assumptions",
+        "dependence_multiplier",
+        "pilot_provenance",
+    ],
+)
+def test_precision_planning_is_required_by_pre_d(tmp_path: Path, estimate: str, field: str) -> None:
+    store = LocalArtifactStore(tmp_path)
+    manifest, plans = make_manifest_case(store, "pre_D")
+    manifest["inference"]["primary_estimate_type"] = estimate
+    path = f"inference.{field}"
+    if field == "dependence_assumptions":
+        path += f".{estimate}_hit"
+    elif field == "half_width_fraction" and estimate == "single_policy":
+        path = "inference.single_policy_half_width_fraction"
+    node = manifest
+    *parents, name = path.split(".")
+    for parent in parents:
+        node = node[parent]
+    node[name] = None
+    result = validate_manifest(manifest, "pre_D", store, plan_references=plans)
+    assert not result.gate_passed
+    assert any(issue.path == path and issue.code == "required" for issue in result.issues)
+
+
+@pytest.mark.parametrize("stage", ["preflight", "post_training"])
+@pytest.mark.parametrize("field", ["primary_estimate_type", "primary_policy_config_id"])
+def test_precision_delay_does_not_delay_estimate_identity(
+    tmp_path: Path, stage: str, field: str
+) -> None:
+    store = LocalArtifactStore(tmp_path)
+    manifest, plans = make_manifest_case(store, stage)
+    manifest["inference"][field] = None
+    result = validate_manifest(manifest, stage, store, plan_references=plans)
+    assert not result.gate_passed
+    assert any(issue.path == f"inference.{field}" for issue in result.issues)
 
 
 @pytest.mark.parametrize("stage", ["pre_selection", "pre_D", "post_D"])
