@@ -11,6 +11,7 @@ import time
 from collections import Counter
 from collections.abc import Iterator, Sequence
 from contextlib import ExitStack, closing, contextmanager
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -60,39 +61,51 @@ from coveo_recsys.verification.provenance import assert_source_binding, source_s
 IDENTITY = "preparation/identity.json"
 
 
+@cache
+def _windows_memory_api() -> tuple[Any, Any, Any]:
+    """Однократная настройка WinAPI; сами показания не кешируются."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Counters(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("faults", wintypes.DWORD),
+            *[
+                (name, ctypes.c_size_t)
+                for name in (
+                    "peak",
+                    "current",
+                    "peak_paged",
+                    "paged",
+                    "peak_nonpaged",
+                    "nonpaged",
+                    "pagefile",
+                    "peak_pagefile",
+                )
+            ],
+        ]
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    process = kernel.GetCurrentProcess
+    process.argtypes = []
+    process.restype = wintypes.HANDLE
+    measure = ctypes.WinDLL("psapi", use_last_error=True).GetProcessMemoryInfo
+    measure.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+    measure.restype = wintypes.BOOL
+    return Counters, process, measure
+
+
 def _peak_memory() -> dict[str, Any]:
     """Пик RSS/working set процесса, не оценка памяти рекомендательной системы."""
     try:
         if sys.platform == "win32":
             import ctypes
-            from ctypes import wintypes
 
-            class Counters(ctypes.Structure):
-                _fields_ = [
-                    ("cb", wintypes.DWORD),
-                    ("faults", wintypes.DWORD),
-                    *[
-                        (name, ctypes.c_size_t)
-                        for name in (
-                            "peak",
-                            "current",
-                            "peak_paged",
-                            "paged",
-                            "peak_nonpaged",
-                            "nonpaged",
-                            "pagefile",
-                            "peak_pagefile",
-                        )
-                    ],
-                ]
-
-            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-            kernel.GetCurrentProcess.restype = wintypes.HANDLE
-            measure = ctypes.WinDLL("psapi", use_last_error=True).GetProcessMemoryInfo
-            measure.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+            Counters, process, measure = _windows_memory_api()
             counters = Counters()
             counters.cb = ctypes.sizeof(counters)
-            if not measure(kernel.GetCurrentProcess(), ctypes.byref(counters), counters.cb):
+            if not measure(process(), ctypes.byref(counters), counters.cb):
                 raise OSError(ctypes.get_last_error())
             value, method = int(counters.peak), "GetProcessMemoryInfo.PeakWorkingSetSize"
         else:
@@ -773,6 +786,7 @@ class Preparation:
         *,
         batch_size: int,
         max_batch_chars: int,
+        evaluation_config: Path | None = None,
     ) -> dict[str, Any]:
         if self._preparing:
             raise InputValidationError("Подготовка уже выполняется")
@@ -784,6 +798,7 @@ class Preparation:
                 plan_path,
                 batch_size=batch_size,
                 max_batch_chars=max_batch_chars,
+                evaluation_config=evaluation_config,
             )
             return {
                 **report,
@@ -825,6 +840,7 @@ class Preparation:
         *,
         batch_size: int,
         max_batch_chars: int,
+        evaluation_config: Path | None = None,
     ) -> dict[str, Any]:
         content, profile_content = plan_path.read_bytes(), profile_path.read_bytes()
         plan = from_json(content, PreparationPlan)
@@ -836,10 +852,37 @@ class Preparation:
             raise InputValidationError(
                 "Технический режим не является подготовкой observed_purchases_v1"
             )
-        if plan.scope == "actual" and any(
-            p.sample_size and p.name not in {"A_G", "B"} for p in plan.periods
-        ):
-            raise InputValidationError("Реальная подготовка разрешена только для A_G и B")
+        active = [p.name for p in plan.periods if p.sample_size]
+        evaluation_admission = None
+        evaluation_bytes = None
+        if plan.scope == "actual" and any(name not in {"A_G", "B"} for name in active):
+            if active != ["C_smoke"] or evaluation_config is None:
+                raise InputValidationError(
+                    "C_smoke требует связанного post_training; остальные периоды закрыты"
+                )
+            from coveo_recsys.cli.admission import require_evaluation_preparation
+
+            evaluation_bytes = evaluation_config.read_bytes()
+            evaluation_admission = {
+                "settings_sha256": sha256_bytes(evaluation_bytes),
+                "manifest_sha256": require_evaluation_preparation(
+                    self.root, evaluation_config, plan, profile_sha256=sha256_bytes(profile_content)
+                ),
+            }
+        elif evaluation_config is not None:
+            raise InputValidationError("Допуск оценки используется только для реального C_smoke")
+
+        def check_evaluation_admission() -> None:
+            if evaluation_config is None or evaluation_admission is None:
+                return
+            if evaluation_config.read_bytes() != evaluation_bytes or (
+                require_evaluation_preparation(
+                    self.root, evaluation_config, plan, profile_sha256=sha256_bytes(profile_content)
+                )
+                != evaluation_admission["manifest_sha256"]
+            ):
+                raise InputValidationError("Допуск C_smoke изменился во время подготовки")
+
         if (
             plan.source_namespace != profile.namespace
             or plan.task.query_dimension != profile.dimensions["query"]
@@ -883,6 +926,8 @@ class Preparation:
             "scope": plan.scope,
             "inputs": self.inputs,
         }
+        if evaluation_admission is not None:
+            identity["evaluation_admission"] = evaluation_admission
         if (self.store.root / REPORT).exists():
             digest = sha256_file(self.store.root / REPORT)
             report = read_report(self.store.root, report_sha256=digest, verify_tables=False)
@@ -891,6 +936,7 @@ class Preparation:
             self.progress("prepared_reused", sessions=report["canonical_sessions"])
             self._verify_current(input_dir, profile_path, plan_path)
             read_report(self.store.root, report_sha256=digest)
+            check_evaluation_admission()
             self._check_budget(force=True)
             return dict(report)
         if (self.store.root / "canonical/index.json").exists() or (
@@ -950,6 +996,7 @@ class Preparation:
         )
         self._verify_current(input_dir, profile_path, plan_path)
         verify_tables(self.store.root, report)
+        check_evaluation_admission()
         self._check_budget(force=True)
         report["measurements"] = self._measurements()
         if strict_json_loads(identity_path.read_bytes()) != identity:

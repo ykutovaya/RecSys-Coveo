@@ -216,9 +216,7 @@ def test_actual_preparation_rejects_nonzero_closed_period(actual_inputs, tmp_pat
         )
     )
     destination = tmp_path / "run"
-    with pytest.raises(
-        InputValidationError, match="Реальная подготовка разрешена только для A_G и B"
-    ):
+    with pytest.raises(InputValidationError, match="C_smoke требует связанного post_training"):
         run(actual_inputs, destination)
     assert not (destination / REPORT).exists()
     assert not list(destination.rglob("*.parquet"))

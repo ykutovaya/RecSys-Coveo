@@ -165,3 +165,35 @@ def test_train_ranker_parser_has_explicit_inputs():
         ]
     )
     assert args.action == "ranker" and args.config.name == "training.json"
+
+
+def test_evaluation_commands_have_explicit_period_and_saved_run():
+    args = _parser().parse_args(
+        [
+            "replay",
+            "--config",
+            "replay.json",
+            "--period",
+            "C_smoke",
+            "--run-dir",
+            "runs/smoke",
+            "--run-id",
+            "smoke",
+        ]
+    )
+    assert args.period == "C_smoke" and args.config.name == "replay.json"
+    assert _parser().parse_args(["report", "--run", "runs/smoke"]).run.name == "smoke"
+    with pytest.raises(SystemExit):
+        _parser().parse_args(
+            [
+                "replay",
+                "--config",
+                "replay.json",
+                "--period",
+                "D",
+                "--run-dir",
+                "runs/d",
+                "--run-id",
+                "d",
+            ]
+        )

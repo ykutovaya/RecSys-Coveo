@@ -1,5 +1,6 @@
 """Привязка будущего обучения B к фактическому preflight до чтения таблиц."""
 
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -14,7 +15,8 @@ from coveo_recsys.artifacts import (
 from coveo_recsys.config import validate_manifest
 from coveo_recsys.contracts import InputValidationError
 from coveo_recsys.contracts.preparation import PreparationPlan
-from coveo_recsys.contracts.serialization import from_json
+from coveo_recsys.contracts.retrieval import RetrievalConfig
+from coveo_recsys.contracts.serialization import from_json, to_json
 from coveo_recsys.data.io import FILES, parse_profile
 from coveo_recsys.ranking import objective
 from coveo_recsys.verification.provenance import assert_source_binding, source_sha256
@@ -42,6 +44,8 @@ def require_training_admission(
     feature_schema_bytes: bytes,
     recipe: dict[str, Any],
     retrieval: dict[str, Any] | None = None,
+    stage: str = "preflight",
+    operation: str | None = None,
 ) -> str | None:
     """Искусственный путь не даёт Э1-10; фактический требует связанного паспорта.
 
@@ -49,6 +53,8 @@ def require_training_admission(
     Свидетельство data закрепляет точные план и отчёт; контрольные суммы исходных
     CSV повторно проверяет существующий валидатор, без разбора будущих событий.
     """
+    if stage not in {"preflight", "post_training"}:
+        raise InputValidationError("Неверная стадия допуска B/C_smoke")
     if prepared.get("scope") == historical.scope == "synthetic":
         return None
     if prepared.get("scope") != "actual" or historical.scope != "actual" or admission is None:
@@ -194,10 +200,192 @@ def require_training_admission(
             "vector_epsilon": base["vector_epsilon"],
         }.items():
             _same(historical.configuration[name], expected, f"historical.{name}")
-        result = validate_manifest(manifest, "preflight", store, input_paths=paths)
+        result = validate_manifest(manifest, stage, store, input_paths=paths, operation=operation)
         if not result.gate_passed:
             detail = "; ".join(f"{issue.path}: {issue.message}" for issue in result.issues)
-            raise InputValidationError(f"Э1-10 preflight не пройден: {detail}")
+            raise InputValidationError(f"Допуск {stage} не пройден: {detail}")
         return digest
     except (OSError, TypeError, ValueError, KeyError) as exc:
+        raise InputValidationError(str(exc)) from exc
+
+
+def require_replay_admission(
+    project_root: Path,
+    admission: dict[str, Any] | None,
+    *,
+    training_prepared: dict[str, Any],
+    historical: ArtifactDescriptor,
+    feature_schema_bytes: bytes,
+    recipe: dict[str, Any],
+    retrieval: dict[str, Any],
+    model_summary: dict[str, Any],
+    plan: PreparationPlan,
+    prepared: dict[str, Any] | None = None,
+    evaluate: bool = False,
+) -> str | None:
+    """Допуск C_smoke до подготовки; готовый набор проверяется перед выдачей.
+
+    Код и preflight принадлежат потребителю. Идентичность модели сохраняет
+    производителя, но связывается с принятым B, схемой и историческим пакетом.
+    """
+    if [p.name for p in plan.periods if p.sample_size] != ["C_smoke"]:
+        raise InputValidationError("Оценочная подготовка разрешена только для C_smoke")
+    try:
+        original_plan = from_json(training_prepared["plan_json"].encode(), PreparationPlan)
+        for name in ("scope", "source_namespace", "task", "coverage", "seed"):
+            _same(getattr(plan, name), getattr(original_plan, name), f"C_smoke/{name}")
+        _same(
+            [(p.name, p.start_ms, p.end_ms) for p in plan.periods],
+            [(p.name, p.start_ms, p.end_ms) for p in original_plan.periods],
+            "границы C_smoke",
+        )
+        _same(plan.diagnostic_sessions, 0, "нормативный отбор C_smoke")
+        _same(model_summary["status"], "completed", "готовность модели")
+        identity = model_summary["identity"]
+        for key, value in {
+            "scope": plan.scope,
+            "period": "B",
+            "historical_sha256": historical.sha256,
+            "preparation_sha256": sha256_bytes(canonical_json_bytes(training_prepared)),
+            "feature_schema_file_sha256": sha256_bytes(feature_schema_bytes),
+        }.items():
+            _same(identity[key], value, f"модель/{key}")
+        _same(model_summary["recipe"], recipe, "рецепт готовой модели")
+        if prepared is not None:
+            _same(prepared["status"], "completed", "готовность C_smoke")
+            _same(prepared["scope"], plan.scope, "область C_smoke")
+            prepared_plan_bytes = prepared["plan_json"].encode("utf-8")
+            _same(from_json(prepared_plan_bytes, PreparationPlan), plan, "план C_smoke")
+            _same(
+                sha256_bytes(prepared_plan_bytes), prepared["inputs"]["plan"], "байты плана C_smoke"
+            )
+            _same(prepared["telemetry_complete"], None, "телеметрия C_smoke")
+            for name, digest in training_prepared["inputs"].items():
+                if name != "plan":
+                    _same(prepared["inputs"][name], digest, f"C_smoke/{name}")
+            selected = prepared["selection"]["C_smoke"]
+            limit = next(p.sample_size for p in plan.periods if p.name == "C_smoke")
+            if (
+                len(selected) > limit
+                or len(selected) != len(set(selected))
+                or any(ids for name, ids in prepared["selection"].items() if name != "C_smoke")
+            ):
+                raise InputValidationError("Состав C_smoke не соответствует плану")
+        if plan.scope == historical.scope == "synthetic":
+            return None
+        digest = require_training_admission(
+            project_root,
+            admission,
+            prepared=training_prepared,
+            historical=historical,
+            feature_schema_bytes=feature_schema_bytes,
+            recipe=recipe,
+            retrieval=retrieval,
+            stage="post_training",
+            operation="evaluate" if evaluate else None,
+        )
+        if admission is None or digest is None:
+            raise InputValidationError("Нет фактического допуска C_smoke")
+        manifest_bytes = (project_root / admission["manifest"]).read_bytes()
+        _same(sha256_bytes(manifest_bytes), digest, "неизменность допуска")
+        manifest = strict_json_loads(manifest_bytes)
+        store = LocalArtifactStore(project_root / admission["run_dir"])
+        data = strict_json_loads(store.read_by_sha256(manifest["evidence"]["data"]))
+        _same(
+            data.get("evaluation_preparation_plan_sha256"),
+            sha256_bytes(to_json(plan)),
+            "план C_smoke в допуске",
+        )
+        models = strict_json_loads(
+            store.read_by_sha256(manifest["artifacts"]["trained_models_sha256"])
+        )
+        entries = [
+            row
+            for row in models["configurations"]
+            if row["config_id"] == manifest["base_model"]["config_id"]
+        ]
+        if len(entries) != 1:
+            raise InputValidationError("Нет единственной закреплённой базовой модели")
+        for name, value in {
+            "model_sha256": model_summary["model_sha256"],
+            "feature_schema_sha256": sha256_bytes(feature_schema_bytes),
+            "actual_tree_count": model_summary["actual_tree_count"],
+            "training_status": "passed",
+        }.items():
+            _same(entries[0][name], value, f"индекс модели/{name}")
+        return digest
+    except (OSError, TypeError, ValueError, KeyError, StopIteration) as exc:
+        raise InputValidationError(str(exc)) from exc
+
+
+def require_evaluation_preparation(
+    project_root: Path, settings_path: Path, plan: PreparationPlan, *, profile_sha256: str
+) -> str | None:
+    """Проверяет готовые входы оценки, не требуя ещё не созданный C_smoke."""
+    from coveo_recsys.config import validate_feature_schema
+    from coveo_recsys.data.prepared import read_report
+    from coveo_recsys.evaluation.reporting import validate_evaluation_plan
+    from coveo_recsys.historical.load import PACKAGE_PATH
+    from coveo_recsys.ranking.load import load_ranker
+    from coveo_recsys.ranking.train import validate_recipe
+
+    try:
+        settings = strict_json_loads(settings_path.read_bytes())
+        validate_evaluation_plan(settings["evaluation_plan"], plan)
+        retrieval = dict(settings["retrieval"])
+        if "quotas" in retrieval:
+            retrieval["quotas"] = tuple(retrieval["quotas"])
+        retrieval = strict_json_loads(canonical_json_bytes(asdict(RetrievalConfig(**retrieval))))
+        planned = from_json(
+            (project_root / settings["preparation_plan"]).read_bytes(), PreparationPlan
+        )
+        _same(planned, plan, "план подготовки C_smoke")
+        schema_bytes = (project_root / settings["feature_schema"]).read_bytes()
+        if validate_feature_schema(strict_json_loads(schema_bytes)):
+            raise InputValidationError("Неверная схема признаков")
+        recipe = strict_json_loads((project_root / settings["recipe"]).read_bytes())
+        validate_recipe(recipe)
+        training = settings["training_preparation"]
+        prepared = read_report(
+            project_root / training["path"], training["report_sha256"], verify_tables=False
+        )
+        _same(profile_sha256, prepared["inputs"]["profile"], "профиль входов C_smoke")
+        historical = LocalArtifactStore(project_root / settings["historical"]["path"]).describe(
+            PACKAGE_PATH
+        )
+        _same(historical.sha256, settings["historical"]["package_sha256"], "исторический пакет")
+        model_root = project_root / settings["model"]["path"]
+        model_bytes = (model_root / "reports/ranker.json").read_bytes()
+        _same(sha256_bytes(model_bytes), settings["model"]["report_sha256"], "отчёт модели")
+        model_summary = strict_json_loads(model_bytes)
+        model = load_ranker(model_root, expected_identity=model_summary["identity"])
+        _same(model.summary, model_summary, "неизменность модели")
+        feature_bytes = (
+            project_root / settings["training_features"]["path"] / "reports/features.json"
+        ).read_bytes()
+        feature_hash = sha256_bytes(feature_bytes)
+        _same(feature_hash, settings["training_features"]["report_sha256"], "отчёт признаков B")
+        _same(feature_hash, model_summary["identity"]["features_sha256"], "признаки готовой модели")
+        features = strict_json_loads(feature_bytes)
+        _same(features["status"], "completed", "готовность признаков B")
+        for name, expected in {
+            "period": "B",
+            "preparation_sha256": training["report_sha256"],
+            "historical_sha256": historical.sha256,
+            "feature_schema_file_sha256": sha256_bytes(schema_bytes),
+            "configuration": retrieval,
+        }.items():
+            _same(features["identity"][name], expected, f"признаки B/{name}")
+        return require_replay_admission(
+            project_root,
+            settings.get("admission"),
+            training_prepared=prepared,
+            historical=historical,
+            feature_schema_bytes=schema_bytes,
+            recipe=recipe,
+            retrieval=retrieval,
+            model_summary=model_summary,
+            plan=plan,
+        )
+    except (OSError, ValueError, TypeError, KeyError) as exc:
         raise InputValidationError(str(exc)) from exc

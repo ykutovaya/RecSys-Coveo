@@ -22,11 +22,16 @@ def test_implemented_checks_keep_partial_coverage_and_existing_test_paths():
         "B05.ranker",
         "B06",
         "B07.retrieval",
+        "B07.evaluation",
         "B08.retrieval",
+        "B08.evaluation",
         "B09",
         "B10.periods",
         "B10.features",
         "B10.ranker",
+        "B10.evaluation",
+        "B11",
+        "B12",
         "B13.preparation",
     }
     for check in checks.values():
@@ -45,6 +50,7 @@ def test_implemented_checks_keep_partial_coverage_and_existing_test_paths():
         "B08.retrieval",
         "B10.features",
         "B10.ranker",
+        "B10.evaluation",
     ):
         assert checks[name]["complete_test"] is False
         assert checks[name]["remaining"]

@@ -5,6 +5,7 @@ import json
 from dataclasses import replace
 from itertools import chain
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -23,8 +24,10 @@ from coveo_recsys.contracts.serialization import from_json, to_json
 from coveo_recsys.data.canonical import canonicalize
 from coveo_recsys.data.io import iter_events, load_profile
 from coveo_recsys.data.prepared import TableWriter, iter_sessions, table_info
+from coveo_recsys.evaluation.replay import recommend
 from coveo_recsys.features import FeatureEngine
 from coveo_recsys.historical.load import load_historical
+from coveo_recsys.ranking.load import RankerModel
 from coveo_recsys.retrieval import retrieve
 from coveo_recsys.retrieval.scores import RetrievalIndex, bind_context, score_request
 from coveo_recsys.state import build_prefix
@@ -41,6 +44,16 @@ def test_future_events_and_search_lists_do_not_change_candidates_or_features(tmp
     historical = package()
     index = RetrievalIndex(historical, CATALOG_HASH)
     engine = FeatureEngine(index, json.loads((ROOT / "configs/feature_schema.json").read_bytes()))
+    model = RankerModel(
+        SimpleNamespace(predict=lambda matrix, **_: np.sum(matrix, axis=1)),
+        {
+            "identity": {"catalog_sha256": CATALOG_HASH},
+            "feature_schema_sha256": engine.schema_sha256,
+            "numeric_columns": list(engine.numeric_columns),
+            "categorical_columns": list(engine.categorical_columns),
+            "actual_tree_count": 1,
+        },
+    )
     results = []
     for changed in (False, True):
         browsing = tmp_path / "browsing.csv"
@@ -138,7 +151,11 @@ def test_future_events_and_search_lists_do_not_change_candidates_or_features(tmp
                 for block in prefix.blocks
             ),
         )
-        results.append((semantic_prefix, selected, features))
+        replies = tuple(
+            recommend(context, engine, model, policy=policy, package_id="test", trace_ref="q")
+            for policy in ("GCS+Rk", "P", "R")
+        )
+        results.append((semantic_prefix, selected, features, replies))
     assert results[0] == results[1]
     assert results[0][0].purchased_skus == ()
     assert set(results[0][1].skus) == set(historical.catalog.skus)

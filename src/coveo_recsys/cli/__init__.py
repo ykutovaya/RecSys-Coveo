@@ -48,7 +48,7 @@ def _parser() -> argparse.ArgumentParser:
     validation.add_argument("--plan-reference", action="append", default=[], metavar="NAME=SHA256")
     validation.add_argument("--input-file", action="append", default=[], metavar="NAME=PATH")
     validation.add_argument("--operation", choices=("evaluate",))
-    data = commands.add_parser("data", help="Подготовка искусственных данных Э1")
+    data = commands.add_parser("data", help="Проверка поставки и подготовка данных")
     data_actions = data.add_subparsers(dest="action", required=True)
     inspect = data_actions.add_parser("inspect")
     prepare = data_actions.add_parser("prepare")
@@ -63,6 +63,7 @@ def _parser() -> argparse.ArgumentParser:
         action.add_argument("--batch-size", type=int, default=1024)
         action.add_argument("--max-batch-chars", type=int, default=4_194_304)
     prepare.add_argument("--plan", type=Path, required=True)
+    prepare.add_argument("--evaluation-config", type=Path)
     supply.add_argument("--max-header-bytes", type=int, default=4096)
     supply.add_argument("--max-record-bytes", type=int, default=1_048_576)
     supply.add_argument("--max-field-chars", type=int, default=1_048_576)
@@ -87,8 +88,14 @@ def _parser() -> argparse.ArgumentParser:
     ranker.add_argument("--config", type=Path, required=True)
     ranker.add_argument("--run-dir", type=Path, required=True)
     ranker.add_argument("--run-id", required=True)
+    replay = commands.add_parser("replay", help="Локальная оценка готовой модели и контролей")
+    replay.add_argument("--config", type=Path, required=True)
+    replay.add_argument("--period", choices=("C_smoke",), required=True)
+    replay.add_argument("--run-dir", type=Path, required=True)
+    replay.add_argument("--run-id", required=True)
+    report = commands.add_parser("report", help="Отчёт по сохранённым результатам оценки")
+    report.add_argument("--run", type=Path, required=True)
     for name in (
-        "replay",
         "select",
         "evaluate",
         "serve",
@@ -133,10 +140,36 @@ def main(argv: list[str] | None = None) -> int:
             reconfigure(encoding="utf-8")
     parser = _parser()
     args = parser.parse_args(argv)
-    if args.command not in {"environment", "manifest", "data", "historical", "features", "train"}:
+    if args.command not in {
+        "environment",
+        "manifest",
+        "data",
+        "historical",
+        "features",
+        "train",
+        "replay",
+        "report",
+    }:
         print(f"Команда {args.command} ещё не реализована", file=sys.stderr)
         return 2
     try:
+        if args.command == "report":
+            from coveo_recsys.cli.replay import read_report
+
+            _emit(read_report(args.run))
+            return 0
+        if args.command == "replay":
+            from coveo_recsys.cli.replay import run_replay
+
+            try:
+                result = run_replay(
+                    args.project_root, args.config, args.run_dir, args.run_id, period=args.period
+                )
+            except KeyboardInterrupt:
+                _emit({"status": "failed", "reason": "interrupted"})
+                return 130
+            _emit(result)
+            return 0
         if args.command == "train":
             from contextlib import redirect_stdout
 
@@ -239,7 +272,13 @@ def main(argv: list[str] | None = None) -> int:
                 if args.action == "inspect":
                     result = preparation.inspect(args.input_dir, args.profile, **options)
                 else:
-                    result = preparation.prepare(args.input_dir, args.profile, args.plan, **options)
+                    result = preparation.prepare(
+                        args.input_dir,
+                        args.profile,
+                        args.plan,
+                        evaluation_config=args.evaluation_config,
+                        **options,
+                    )
             except KeyboardInterrupt:
                 preparation.progress("failed", reason="interrupted")
                 _emit({"status": "failed", "reason": "interrupted"})

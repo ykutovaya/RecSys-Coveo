@@ -36,6 +36,41 @@
     "EXPL01"
   ],
   "implemented_checks": {
+    "B07.evaluation": {
+      "test_id": "B07", "part": "evaluation", "complete_test": true,
+      "paths": ["tests/unit/test_e3_retrieval.py", "tests/properties/test_e3_retrieval_properties.py", "tests/unit/test_e5_replay.py", "tests/unit/test_e5_metrics.py", "tests/properties/test_e5_metrics_properties.py", "tests/integration/test_e5_reporting.py", "tests/integration/test_e5_raw_workflow.py"],
+      "reference_paths": ["tests/reference/e3_retrieval_oracle.py", "tests/reference/e5_metrics_oracle.py"],
+      "coverage": "Квоты, допустимость, ветвь и доставка; общий знаменатель, цепочка V/U/Hit и три потери",
+      "remaining": "Фактический C_smoke — Э5-09; измеренные отказы сервиса — Э6"
+    },
+    "B08.evaluation": {
+      "test_id": "B08", "part": "evaluation", "complete_test": true,
+      "paths": ["tests/unit/test_e3_retrieval.py", "tests/unit/test_e5_replay.py", "tests/unit/test_e5_metrics.py"],
+      "reference_paths": ["tests/reference/e3_retrieval_oracle.py", "tests/reference/e5_metrics_oracle.py"],
+      "coverage": "Происхождения, измеренные и отсутствующие списки, пересечения, Delta_fixed без заполнения, резерв и знаменатели",
+      "remaining": "Фактический расчёт — Э5-09"
+    },
+    "B10.evaluation": {
+      "test_id": "B10", "part": "evaluation", "complete_test": false,
+      "paths": ["tests/unit/test_e5_replay.py", "tests/properties/test_e5_replay_properties.py", "tests/unit/test_e5_sensitivity.py", "tests/unit/test_e5_admission.py", "tests/integration/test_e5_preparation.py", "tests/integration/test_e5_admission_binding.py", "tests/integration/test_e5_replay_integrity.py", "tests/integration/test_e5_replay_pipeline.py"],
+      "reference_paths": ["tests/reference/e3_cases.py", "tests/reference/manifest_cases.py"],
+      "coverage": "Раздельные выдача и цели, закрытые периоды, старый производитель и новый допуск C_smoke, ограниченная чувствительность к кратностям",
+      "remaining": "Вариант без метаданных и выбор — Э7; фактический C_smoke — Э5-08–Э5-09"
+    },
+    "B11": {
+      "test_id": "B11", "part": "disabled_calibration", "complete_test": true,
+      "paths": ["tests/unit/test_manifest_protocol.py", "tests/unit/test_e5_replay.py"],
+      "reference_paths": ["tests/reference/manifest_cases.py", "tests/reference/e3_cases.py"],
+      "coverage": "Калибровка и E отключены; локальная выдача использует сырые баллы, а не вероятности покупки",
+      "remaining": "Проверка параметров фактического запуска — Э5-08"
+    },
+    "B12": {
+      "test_id": "B12", "part": "calendar_intervals", "complete_test": true,
+      "paths": ["tests/unit/test_e5_intervals.py", "tests/properties/test_e5_intervals_properties.py", "tests/unit/test_e5_bootstrap_experiment.py"],
+      "reference_paths": ["tests/reference/e5_intervals_oracle.py", "tests/reference/e5_bootstrap_experiment.py"],
+      "coverage": "Календарные блоки, отношение сумм и парный перенос; редкие исходы, вырождение, границы достаточности, независимый опыт дисперсии и покрытия",
+      "remaining": "План зависимости и достаточность конкретного C_smoke оцениваются отдельно; до D требуется план точности"
+    },
     "B01.features": {
       "test_id": "B01",
       "part": "features",
@@ -52,7 +87,7 @@
       "paths": ["tests/unit/test_e3_scores.py", "tests/unit/test_e3_retrieval.py", "tests/integration/test_e3_context.py"],
       "reference_paths": ["tests/reference/e3_retrieval_oracle.py"],
       "coverage": "Последний поиск, возраст и совместимость пространства; отбор и признаки не зависят от поисковой выдачи и кликов",
-      "remaining": "Повтор на полном ответе с ранжировщиком"
+      "remaining": "Полный ответ с ранжировщиком проверен в test_e3_context; фактический C_smoke — Э5-09"
     },
     "B05.features": {
       "test_id": "B05",
