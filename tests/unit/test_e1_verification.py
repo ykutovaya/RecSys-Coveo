@@ -15,6 +15,7 @@ def test_implemented_checks_keep_partial_coverage_and_existing_test_paths():
         "B02.context",
         "B02.features",
         "B03.data",
+        "B03.service",
         "B04.graph",
         "B05.content",
         "B05.features",
@@ -33,9 +34,13 @@ def test_implemented_checks_keep_partial_coverage_and_existing_test_paths():
         "B11",
         "B12",
         "B13.preparation",
+        "B13.service",
+        "B14.local",
+        "B15.local",
+        "EXPL01",
     }
     for check in checks.values():
-        assert check["test_id"] in registry["normative_ids"]
+        assert check["test_id"] in registry["normative_ids"] + registry["own_ids"]
         assert check["paths"] and check["reference_paths"]
         assert all((ROOT / name).is_file() for name in check["paths"] + check["reference_paths"])
     for name in (

@@ -5,13 +5,12 @@ from enum import StrEnum
 from typing import Protocol
 
 from .common import InputValidationError, id_bytes, require_int64
+from .serialization import validate_record
 
 
 @dataclass(frozen=True, slots=True)
 class Record:
     def __post_init__(self) -> None:
-        from .serialization import validate_record
-
         validate_record(self)
 
 
@@ -346,9 +345,10 @@ class CandidateResult(Record):
 
     def __post_init__(self) -> None:
         Record.__post_init__(self)
-        if len(self.skus) != len(set(self.skus)):
+        sku_set = set(self.skus)
+        if len(self.skus) != len(sku_set):
             raise InputValidationError("Повтор SKU в кандидатах")
-        if any(item.sku not in self.skus for item in self.evidence):
+        if any(item.sku not in sku_set for item in self.evidence):
             raise InputValidationError("Опора вне кандидатов выбранной ветви")
 
 
@@ -431,11 +431,6 @@ class StateTransition(Record):
         require_int64(self.expected_version, nonnegative=True)
         if self.next_snapshot.session_id != self.session_id:
             raise InputValidationError("Переход содержит снимок чужой сессии")
-
-
-class StateStore(Protocol):
-    def read(self, session_id: str) -> PrefixSnapshot | None: ...
-    def compare_and_swap(self, transition: StateTransition) -> bool: ...
 
 
 class StateReducer(Protocol):

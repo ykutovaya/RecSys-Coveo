@@ -105,9 +105,77 @@ def test_measurable_source_score_exists_outside_source_quota_but_rank_does_not()
     assert values["rank_popularity"] == pytest.approx((1 / 3, True))
     scores = score_request(context, index, RetrievalConfig())
     reused = FeatureEngine(index, schema()).build(
-        context, candidates(index, context), scores=scores
+        context, candidates(index, context), scores=scores, check_deadline=lambda: None
     )
     assert reused == actual
+
+
+@pytest.mark.parametrize("expired_at", ["start", "checked", 1, 2, 3, 4, "batch"])
+def test_expired_feature_deadline_stops_work_without_returning_partial_batch(
+    monkeypatch, expired_at
+):
+    from coveo_recsys.features import engine as feature_engine
+
+    context = bind(request())
+    index = RetrievalIndex(package(), CATALOG_HASH)
+    engine = FeatureEngine(index, schema())
+    selected = candidates(index, context, ("a", "b", "c", "я"))
+    scores = score_request(context, index)
+    expired = expired_at == "start"
+    failure = RuntimeError("deadline reached")
+    checked, rows, batches = [], [], []
+    original_check, original_row = engine._check, index.row
+    original_batch = feature_engine.FeatureBatch
+    anchor_count = len(context.prefix.full_last_detail)
+
+    def check_deadline():
+        if expired:
+            raise failure
+
+    def validate(*args):
+        nonlocal expired
+        checked.append(True)
+        original_check(*args)
+        if expired_at == "checked":
+            expired = True
+
+    def read_row(sku):
+        nonlocal expired
+        rows.append(sku)
+        result = original_row(sku)
+        if len(rows) - anchor_count == expired_at:
+            expired = True
+        return result
+
+    def make_batch(*args):
+        nonlocal expired
+        result = original_batch(*args)
+        batches.append(result)
+        if expired_at == "batch":
+            expired = True
+        return result
+
+    def unexpected_scoring(*args):
+        pytest.fail("Просроченный запрос не должен начинать расчёт общих баллов")
+
+    monkeypatch.setattr(engine, "_check", validate)
+    monkeypatch.setattr(index, "row", read_row)
+    monkeypatch.setattr(feature_engine, "FeatureBatch", make_batch)
+    monkeypatch.setattr(feature_engine, "score_request", unexpected_scoring)
+    with pytest.raises(RuntimeError) as caught:
+        engine.build(
+            context,
+            selected,
+            scores=None if expired_at == "start" else scores,
+            check_deadline=check_deadline,
+        )
+    assert caught.value is failure
+    assert bool(checked) == (expired_at != "start")
+    assert len(batches) == (expired_at == "batch")
+    if isinstance(expired_at, int):
+        assert rows[anchor_count:] == list(selected.skus[:expired_at])
+    elif expired_at in {"start", "checked"}:
+        assert rows == []
 
 
 @pytest.mark.parametrize("semantics,expected", [("set_v1", 0.5), ("multiset_v1", 0.8)])

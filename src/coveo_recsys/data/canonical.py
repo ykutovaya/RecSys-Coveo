@@ -66,12 +66,13 @@ def _external_sort(
     fan_in: int,
     check_resources: Callable[[], None] | None = None,
 ) -> Generator[RawEvent, None, None]:
-    directory.mkdir()
     chunks: list[Path] = []
     batch: list[RawEvent] = []
     size = 0
 
     def write_chunk() -> None:
+        if not chunks:
+            directory.mkdir()
         path = directory / f"chunk-{len(chunks)}.jsonl"
         with path.open("wb") as stream:
             for event in sorted(batch, key=key):
@@ -89,6 +90,15 @@ def _external_sort(
             batch, size = [], 0
         batch.append(event)
         size += event_bytes
+    if not chunks:
+        if batch:
+            batch.sort(key=key)
+            if check_resources is not None:
+                check_resources()
+            for event in batch:
+                # Сохраняем вложенную и смысловую проверку дискового пути.
+                yield from_json(to_json(event), RawEvent)
+        return
     if batch:
         write_chunk()
     generation = 0

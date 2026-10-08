@@ -3,6 +3,7 @@
 import hashlib
 import json
 import math
+from collections.abc import Callable
 from typing import Any, cast
 
 import numpy as np
@@ -112,9 +113,14 @@ class FeatureEngine:
         candidates: CandidateResult,
         *,
         scores: QueryScores | None = None,
+        check_deadline: Callable[[], None] | None = None,
     ) -> FeatureBatch:
+        if check_deadline is not None:
+            check_deadline()
         scores = score_request(context, self.index, self.config) if scores is None else scores
         self._check(context, candidates, scores)
+        if check_deadline is not None:
+            check_deadline()
         prefix = context.prefix
         semantics = cast(MultiplicitySemantics, prefix.event_semantics)
         counts = {(kind, sku): count for kind, sku, count in prefix.counters}
@@ -134,6 +140,8 @@ class FeatureEngine:
                 add_count = counter_add(add_count, count)
         numeric, categorical, masks = [], [], []
         for sku in candidates.skus:
+            if check_deadline is not None:
+                check_deadline()
             position = self.index.positions[sku]
             candidate = self.index.row(sku)
             assert candidate is not None
@@ -293,7 +301,9 @@ class FeatureEngine:
             numeric.append(tuple(numeric_row))
             categorical.append(tuple(categorical_row))
             masks.append(tuple(mask_row))
-        return FeatureBatch(
+        if check_deadline is not None:
+            check_deadline()
+        batch = FeatureBatch(
             context.request_id,
             candidates.skus,
             self.numeric_columns,
@@ -303,6 +313,9 @@ class FeatureEngine:
             tuple(masks),
             self.schema_sha256,
         )
+        if check_deadline is not None:
+            check_deadline()
+        return batch
 
     def _check(
         self, context: RequestContext, candidates: CandidateResult, scores: QueryScores

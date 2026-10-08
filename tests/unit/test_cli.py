@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -74,6 +75,37 @@ def test_features_build_has_explicit_period_and_inputs():
     assert str(args.config) == "features.json"
 
 
+def test_serve_requires_explicit_config_and_local_run_directory():
+    args = _parser().parse_args(
+        ["serve", "--config", "configs/coveo_service.json", "--run-dir", "runs/service"]
+    )
+    assert args.command == "serve"
+    assert args.host == "127.0.0.1" and args.port == 8000
+    assert args.config.as_posix() == "configs/coveo_service.json"
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("timeout_ms", value) for value in (True, 0, -1, 1.5, "1000", None, 100, 2**63)]
+    + [("reserve_ms", value) for value in (True, 0, -1, 1.5, "100", None, 1000, 1001, 2**63)],
+)
+def test_serve_rejects_invalid_timing_before_loading_package(tmp_path, monkeypatch, field, value):
+    from coveo_recsys.cli import serving
+
+    settings = json.loads(
+        (Path(__file__).parents[2] / "configs/coveo_service.json").read_text(encoding="utf-8")
+    )
+    settings.update(timeout_ms=1000, reserve_ms=100)
+    settings[field] = value
+    config = tmp_path / "service.json"
+    config.write_text(json.dumps(settings), encoding="utf-8")
+    monkeypatch.setenv("COVEO_LOCAL_TOKEN", "test-secret")
+    monkeypatch.setattr(serving, "load_serving_package", lambda *_: pytest.fail("package read"))
+    with pytest.raises(ValueError, match="timeout_ms|reserve_ms"):
+        serving.run_serve(tmp_path, config, tmp_path / "run")
+    assert not (tmp_path / "run").exists()
+
+
 def test_environment_command(capsys):
     assert main(["environment"]) == 0
     result = json.loads(capsys.readouterr().out)
@@ -122,13 +154,13 @@ def test_manifest_command_rejects_invalid_json_before_validation(tmp_path, capsy
 def test_redirected_cli_output_is_utf8(tmp_path):
     environment = dict(os.environ, PYTHONIOENCODING="cp1251")
     unsupported = subprocess.run(
-        [sys.executable, "-m", "coveo_recsys", "serve"],
+        [sys.executable, "-m", "coveo_recsys", "evaluate"],
         capture_output=True,
         encoding="utf-8",
         env=environment,
     )
     assert unsupported.returncode == 2
-    assert "Команда serve ещё не реализована" in unsupported.stderr
+    assert "Команда evaluate ещё не реализована" in unsupported.stderr
     invalid = subprocess.run(
         [
             sys.executable,

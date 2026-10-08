@@ -6,17 +6,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from coveo_recsys.cli import preparation
+from coveo_recsys import process_memory
 
 
 @pytest.fixture(autouse=True)
 def clear_windows_api_cache():
-    setup = getattr(preparation, "_windows_memory_api", None)
-    if setup is not None:
-        setup.cache_clear()
+    process_memory._windows_memory_api.cache_clear()
     yield
-    if setup is not None:
-        setup.cache_clear()
+    process_memory._windows_memory_api.cache_clear()
 
 
 class Function:
@@ -62,7 +59,7 @@ def windows_api(monkeypatch, readings):
         loads.append(name)
         return {"kernel32": kernel, "psapi": psapi}[name]
 
-    monkeypatch.setattr(preparation, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(process_memory, "sys", SimpleNamespace(platform="win32"))
     monkeypatch.setattr(ctypes, "WinDLL", load, raising=False)
     monkeypatch.setattr(ctypes, "get_last_error", lambda: 5, raising=False)
     return SimpleNamespace(
@@ -72,7 +69,7 @@ def windows_api(monkeypatch, readings):
 
 def test_windows_reuses_api_setup_but_measures_each_call(monkeypatch):
     api = windows_api(monkeypatch, [100, 200, 300])
-    assert [preparation._peak_memory() for _ in range(3)] == [
+    assert [process_memory.peak_memory() for _ in range(3)] == [
         {
             "peak_process_memory_bytes": value,
             "memory_method": "GetProcessMemoryInfo.PeakWorkingSetSize",
@@ -92,13 +89,13 @@ def test_windows_reuses_api_setup_but_measures_each_call(monkeypatch):
 )
 def test_windows_measurement_error_never_returns_cached_value(monkeypatch, failure):
     api = windows_api(monkeypatch, [100, failure, 300])
-    assert preparation._peak_memory()["peak_process_memory_bytes"] == 100
+    assert process_memory.peak_memory()["peak_process_memory_bytes"] == 100
     reason = "OSError" if failure == 0 else type(failure).__name__
-    assert preparation._peak_memory() == {
+    assert process_memory.peak_memory() == {
         "peak_process_memory_bytes": None,
         "memory_reason": reason,
     }
-    assert preparation._peak_memory()["peak_process_memory_bytes"] == 300
+    assert process_memory.peak_memory()["peak_process_memory_bytes"] == 300
     assert api.loads == ["kernel32", "psapi"]
 
 
@@ -114,11 +111,11 @@ def test_windows_setup_error_is_reported_and_retried(monkeypatch, error):
         return api.load(name, use_last_error=use_last_error)
 
     monkeypatch.setattr(ctypes, "WinDLL", load, raising=False)
-    assert preparation._peak_memory() == {
+    assert process_memory.peak_memory() == {
         "peak_process_memory_bytes": None,
         "memory_reason": error.__name__,
     }
-    assert preparation._peak_memory()["peak_process_memory_bytes"] == 300
+    assert process_memory.peak_memory()["peak_process_memory_bytes"] == 300
     assert attempts == ["kernel32", "kernel32", "psapi"]
 
 
@@ -131,11 +128,11 @@ def test_nonwindows_keeps_current_getrusage_units(monkeypatch, platform, scale):
         calls.append(who)
         return SimpleNamespace(ru_maxrss=next(readings))
 
-    monkeypatch.setattr(preparation, "sys", SimpleNamespace(platform=platform))
+    monkeypatch.setattr(process_memory, "sys", SimpleNamespace(platform=platform))
     monkeypatch.setitem(
         sys.modules, "resource", SimpleNamespace(RUSAGE_SELF=0, getrusage=getrusage)
     )
-    assert [preparation._peak_memory() for _ in range(2)] == [
+    assert [process_memory.peak_memory() for _ in range(2)] == [
         {"peak_process_memory_bytes": value * scale, "memory_method": "getrusage.ru_maxrss"}
         for value in (7, 19)
     ]

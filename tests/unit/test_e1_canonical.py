@@ -71,6 +71,40 @@ def test_explicit_resource_refusal_and_cleanup(tmp_path):
         list(canonicalize([event()], temp_dir=tmp_path, chunk_bytes=10))
 
 
+@pytest.mark.parametrize("chunk_size", [3, 4])
+def test_single_batch_matches_external_sort_without_chunk_files(tmp_path, monkeypatch, chunk_size):
+    rows = [event("b", sku="B"), event("a"), event("retry", transport="t")]
+    expected = list(canonicalize(rows, temp_dir=tmp_path, chunk_size=1, fan_in=2))
+    checked = []
+
+    def no_chunk_file(*args, **kwargs):
+        raise AssertionError("Одна порция не требует файлов сортировки")
+
+    def check_resources():
+        checked.append(True)
+        assert not any(path.name in {"identity", "time"} for path in tmp_path.rglob("*"))
+
+    monkeypatch.setattr(Path, "open", no_chunk_file)
+    actual = list(
+        canonicalize(
+            rows, temp_dir=tmp_path, chunk_size=chunk_size, check_resources=check_resources
+        )
+    )
+    assert actual == expected
+    assert len(checked) == 2
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("chunk_size", [1, 10])
+def test_sort_keeps_nested_record_validation(tmp_path, chunk_size):
+    payload = SearchPayload((1.0,), None)
+    row = event("search", sku=None, kind=EventType.SEARCH, search=payload)
+    object.__setattr__(payload, "reason", 17)
+    with pytest.raises(InputValidationError):
+        list(canonicalize([row, event()], temp_dir=tmp_path, chunk_size=chunk_size))
+    assert not list(tmp_path.iterdir())
+
+
 def test_absent_search_has_one_canonical_marker_without_order_dependence():
     absent = event("technical", sku=None, kind=EventType.SEARCH, search=None)
     explicit = replace(absent, search=SearchPayload(None, "vector_absent"), provenance="another")
@@ -107,10 +141,12 @@ def test_resource_check_observes_partial_merge_and_input_output_peak(tmp_path):
     assert not list(tmp_path.iterdir())
 
 
-@pytest.mark.parametrize("stage", ["chunk", "merge"])
+@pytest.mark.parametrize("stage", ["memory", "chunk", "merge"])
 def test_resource_callback_refusal_cleans_temporary_sort_files(tmp_path, stage):
     def check_resources():
-        if any(path.stat().st_size for path in tmp_path.rglob(f"{stage}-*.jsonl")):
+        if stage == "memory" or any(
+            path.stat().st_size for path in tmp_path.rglob(f"{stage}-*.jsonl")
+        ):
             raise InputValidationError("test_resource_limit")
 
     with pytest.raises(InputValidationError, match="test_resource_limit"):
@@ -118,7 +154,7 @@ def test_resource_callback_refusal_cleans_temporary_sort_files(tmp_path, stage):
             canonicalize(
                 (event(str(i)) for i in range(5)),
                 temp_dir=tmp_path,
-                chunk_size=1,
+                chunk_size=10 if stage == "memory" else 1,
                 fan_in=2,
                 check_resources=check_resources,
             )

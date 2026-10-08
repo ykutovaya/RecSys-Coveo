@@ -191,6 +191,23 @@ def test_fallback_does_not_inherit_recent_quota_or_limited_history():
     assert all(origins == ("recent",) for _, origins in result.origins)
 
 
+@pytest.mark.parametrize("purchased", [(), ("a",), ("outside",), ("a", "b", "c", "я")])
+def test_fallback_purchase_mask_uses_existing_positions(purchased):
+    idx, cfg = RetrievalIndex(package(), CATALOG_HASH), config()
+    ctx = context(
+        request(((2000, "detail", "a"),) + tuple((2000, "purchase", sku) for sku in purchased))
+    )
+    expected = retrieve_fallback(ctx, idx, cfg)
+
+    class IndexedCatalog(tuple):
+        def __iter__(self):
+            pytest.fail("Повторный обход всего каталога для маски покупок")
+
+    # Данные прежние; запрещён только обход всех SKU после построения индекса.
+    object.__setattr__(idx.package.catalog, "skus", IndexedCatalog(idx.package.catalog.skus))
+    assert retrieve_fallback(ctx, idx, cfg) == expected
+
+
 @pytest.mark.parametrize(
     "fn,branch", [(retrieve, Branch.PRIMARY), (retrieve_fallback, Branch.FALLBACK)]
 )

@@ -7,6 +7,7 @@ import re
 import types
 from enum import Enum
 from functools import cache
+from operator import attrgetter
 from typing import Any, Callable, TypeVar, cast, get_args, get_origin, get_type_hints
 
 from .common import CONTRACT_VERSION, InputValidationError, id_bytes, require_int64
@@ -15,6 +16,35 @@ T = TypeVar("T")
 
 
 _type_hints: Callable[[Any], dict[str, Any]] = cache(get_type_hints)
+
+
+@cache
+def _type_shape(expected: Any) -> tuple[Any, tuple[Any, ...]]:
+    return get_origin(expected), get_args(expected)
+
+
+def _inspect_fields(record_type: type[Any]) -> tuple[tuple[str, Any, bool, bool, bool], ...]:
+    return tuple(
+        (
+            name,
+            expected,
+            name.endswith("_id") or name == "sku",
+            name.endswith("_ids") or name in {"skus", "delivered_skus", "purchases"},
+            name.endswith("_sha256"),
+        )
+        for name, expected in _type_hints(record_type).items()
+    )
+
+
+_validation_fields: Callable[[Any], tuple[tuple[str, Any, bool, bool, bool], ...]] = cache(
+    _inspect_fields
+)
+
+
+@cache
+def _field_reader(record_type: type[Any]) -> tuple[tuple[str, ...], Callable[[Any], Any] | None]:
+    names = tuple(field.name for field in dataclasses.fields(record_type))
+    return names, attrgetter(*names) if names else None
 
 
 def record_version(record_type: type[Any]) -> str:
@@ -38,6 +68,11 @@ def record_version(record_type: type[Any]) -> str:
 
 
 def _convert(value: Any, expected: Any, *, decode: bool = False) -> Any:
+    if value is None and (
+        expected is type(None)
+        or (isinstance(expected, types.UnionType) and type(None) in expected.__args__)
+    ):
+        return None
     if expected is int:
         return require_int64(value)
     if expected is float:
@@ -57,7 +92,7 @@ def _convert(value: Any, expected: Any, *, decode: bool = False) -> Any:
             except UnicodeError as exc:
                 raise InputValidationError("Строка содержит некорректный UTF-8") from exc
         return value
-    origin, args = get_origin(expected), get_args(expected)
+    origin, args = _type_shape(expected)
     if origin is types.UnionType:
         for candidate in args:
             try:
@@ -107,24 +142,26 @@ def _convert(value: Any, expected: Any, *, decode: bool = False) -> Any:
 
 
 def validate_record(value: Any) -> None:
-    for name, expected in _type_hints(type(value)).items():
+    for name, expected, identifier, identifiers, digest in _validation_fields(type(value)):
         item = getattr(value, name)
         _convert(item, expected)
-        if item is not None and (name.endswith("_id") or name == "sku"):
+        if item is not None and identifier:
             id_bytes(item)
-        if item is not None and (
-            name.endswith("_ids") or name in {"skus", "delivered_skus", "purchases"}
-        ):
-            for identifier in item:
-                id_bytes(identifier)
-        if name.endswith("_sha256") and not re.fullmatch(r"[0-9a-f]{64}", item):
+        if item is not None and identifiers:
+            for member in item:
+                id_bytes(member)
+        if digest and not re.fullmatch(r"[0-9a-f]{64}", item):
             raise InputValidationError("Ожидался SHA-256 в нижнем регистре")
 
 
 def _record_data(value: Any) -> dict[str, Any]:
     if not dataclasses.is_dataclass(value) or isinstance(value, type):
         raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
-    return {field.name: getattr(value, field.name) for field in dataclasses.fields(value)}
+    names, read = _field_reader(type(value))
+    if read is None:
+        return {}
+    values = read(value)
+    return dict(zip(names, (values,) if len(names) == 1 else values, strict=True))
 
 
 def to_json(record: Any) -> bytes:

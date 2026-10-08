@@ -99,6 +99,79 @@ class _Rejected(ValueError):
         super().__init__(message)
 
 
+def _event_time(
+    event_time_ms: int, decision_time_ms: int, calendar: tuple[int, int], limits: EnvelopeLimits
+) -> None:
+    _require(calendar[0] <= event_time_ms < calendar[1], "event_time_ms", "Время вне календаря")
+    _require(event_time_ms <= decision_time_ms, "event_time_ms", "Будущее", "timestamp_future")
+    _require(
+        decision_time_ms - event_time_ms <= limits.late_event_limit_ms,
+        "event_time_ms",
+        "Запоздание",
+        "timestamp_late",
+    )
+
+
+def block_time_issues(
+    block: SealedBlock, calendar: tuple[int, int], limits: EnvelopeLimits = EnvelopeLimits()
+) -> tuple[ValidationIssue, ...]:
+    """Окно нового блока; вызывается только после проверки квитанции повтора."""
+    try:
+        _event_time(block.event_time_ms, block.decision_time_ms, calendar, limits)
+    except _Rejected as exc:
+        return (exc.issue,)
+    return ()
+
+
+def inspect_sealed_block(
+    envelope: bytes,
+    *,
+    decision_time_ms: int,
+    expected_namespace: str,
+    query_dimension: int,
+    limits: EnvelopeLimits = EnvelopeLimits(),
+) -> EnvelopeValidation:
+    """Статическая проверка для сервиса: не приём и не проверка нового окна времени."""
+    try:
+        if type(envelope) is not bytes or len(envelope) > limits.max_request_bytes:
+            return EnvelopeValidation(None, (ValidationIssue("$", "input_limit", "Размер входа"),))
+        payload = _events_bytes(envelope.decode("utf-8"))
+    except (ValueError, TypeError, UnicodeError, RecursionError):
+        return EnvelopeValidation(None, (ValidationIssue("$", "invalid_input", "Неверный вход"),))
+    return _validate_sealed_block(
+        envelope,
+        payload,
+        decision_time_ms=decision_time_ms,
+        allowed_event_time_range=(-(2**63), 2**63 - 1),
+        expected_namespace=expected_namespace,
+        query_dimension=query_dimension,
+        limits=limits,
+        check_time=False,
+    )
+
+
+def validate_sealed_block(
+    envelope: bytes,
+    payload_bytes: bytes,
+    *,
+    decision_time_ms: int,
+    allowed_event_time_range: tuple[int, int],
+    expected_namespace: str,
+    query_dimension: int,
+    limits: EnvelopeLimits = EnvelopeLimits(),
+) -> EnvelopeValidation:
+    """Прежняя полная проверка нового конверта; статический успех не равен приёму."""
+    return _validate_sealed_block(
+        envelope,
+        payload_bytes,
+        decision_time_ms=decision_time_ms,
+        allowed_event_time_range=allowed_event_time_range,
+        expected_namespace=expected_namespace,
+        query_dimension=query_dimension,
+        limits=limits,
+    )
+
+
 def _require(condition: bool, path: str, message: str, code: str = "invalid_input") -> None:
     if not condition:
         raise _Rejected(code, path, message)
@@ -239,7 +312,7 @@ def _event(
     )
 
 
-def validate_sealed_block(
+def _validate_sealed_block(
     envelope: bytes,
     payload_bytes: bytes,
     *,
@@ -248,6 +321,7 @@ def validate_sealed_block(
     expected_namespace: str,
     query_dimension: int,
     limits: EnvelopeLimits = EnvelopeLimits(),
+    check_time: bool = True,
 ) -> EnvelopeValidation:
     """Проверить новый полный блок; при любой ошибке block=None, без части событий.
 
@@ -291,17 +365,8 @@ def validate_sealed_block(
             "Неожиданное пространство источника",
         )
         time_ms = require_int64(header["event_time_ms"])
-        _require(start <= time_ms < end, "event_time_ms", "Время вне календарного диапазона")
-        # Разность сравнивается в точных целых Python, без переполнения int64.
-        _require(
-            time_ms <= decision_time_ms, "event_time_ms", "Событие из будущего", "timestamp_future"
-        )
-        _require(
-            decision_time_ms - time_ms <= limits.late_event_limit_ms,
-            "event_time_ms",
-            "Превышен предел запоздания",
-            "timestamp_late",
-        )
+        if check_time:
+            _event_time(time_ms, decision_time_ms, (start, end), limits)
         count = require_int64(header["event_count"])
         _require(
             isinstance(header["events"], list) and isinstance(header["event_ids"], list),

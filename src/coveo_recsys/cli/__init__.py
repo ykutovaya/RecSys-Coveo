@@ -95,10 +95,14 @@ def _parser() -> argparse.ArgumentParser:
     replay.add_argument("--run-id", required=True)
     report = commands.add_parser("report", help="Отчёт по сохранённым результатам оценки")
     report.add_argument("--run", type=Path, required=True)
+    serve = commands.add_parser("serve", help="Локальный сервис рекомендаций")
+    serve.add_argument("--config", type=Path, required=True)
+    serve.add_argument("--run-dir", type=Path, required=True)
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8000)
     for name in (
         "select",
         "evaluate",
-        "serve",
         "load",
         "experiment",
     ):
@@ -149,10 +153,16 @@ def main(argv: list[str] | None = None) -> int:
         "train",
         "replay",
         "report",
+        "serve",
     }:
         print(f"Команда {args.command} ещё не реализована", file=sys.stderr)
         return 2
     try:
+        if args.command == "serve":
+            from coveo_recsys.cli.serving import run_serve
+
+            run_serve(args.project_root, args.config, args.run_dir, host=args.host, port=args.port)
+            return 0
         if args.command == "report":
             from coveo_recsys.cli.replay import read_report
 

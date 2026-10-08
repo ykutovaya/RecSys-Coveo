@@ -23,8 +23,11 @@ def fallback(
 ) -> CandidateResult:
     _check_context(context, index)
     catalog = index.package.catalog.skus
-    purchased = set(context.prefix.purchased_skus)
-    eligible = np.array([sku not in purchased for sku in catalog], dtype=np.bool_)
+    eligible = np.ones(len(catalog), dtype=np.bool_)
+    for sku in context.prefix.purchased_skus:
+        position = index.positions.get(sku)
+        if position is not None:
+            eligible[position] = False
     recent = np.zeros(len(catalog), dtype=np.float64)
     recent_mask = np.zeros(len(catalog), dtype=np.bool_)
     for sku, timestamp in context.prefix.last_views:

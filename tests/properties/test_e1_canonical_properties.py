@@ -19,11 +19,11 @@ def test_canonical_counts_and_permutations(rows):
     ]
     expected = expected_counts(events)
     blocks = list(canonicalize(events, chunk_size=3, fan_in=2))
-    reverse = list(canonicalize(reversed(events), chunk_size=5, fan_in=2))
+    reverse = list(canonicalize(reversed(events), chunk_size=15, fan_in=2))
     actual = {
         (e.source_namespace, e.session_id, e.event_time_ms, e.event_type.value, e.sku): n
         for b in blocks
         for e, (_, n) in zip(b.events, b.raw_multiplicities, strict=True)
     }
     assert actual == expected
-    assert [b.block_id for b in blocks] == [b.block_id for b in reverse]
+    assert blocks == reverse

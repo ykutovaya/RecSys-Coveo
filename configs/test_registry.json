@@ -309,6 +309,41 @@
       "coverage": "Валидатор 2.10, хранение, подготовка Э1, поставка Coveo и согласованность исторического пакета",
       "remaining": "Не подтверждает полноту фактического паспорта или реальный preflight"
     },
+    "B03.service": {
+      "test_id": "B03", "part": "service", "complete_test": false,
+      "paths": ["tests/unit/test_e6_state.py", "tests/unit/test_e6_state_store.py", "tests/integration/test_e6_api.py"],
+      "reference_paths": ["tests/reference/e1_state_oracle.py", "tests/reference/e1_envelope_oracle.py"],
+      "coverage": "Локальные квитанции, повторы, атомарность, лимиты, разрывы и поздние срезы",
+      "remaining": "Рабочая СУБД и нормативная нагрузка Э6-06–Э6-11"
+    },
+    "B13.service": {
+      "test_id": "B13", "part": "service", "complete_test": false,
+      "paths": ["tests/unit/test_e6_package.py", "tests/integration/test_e6_coordinator.py"],
+      "reference_paths": ["tests/reference/e3_features_oracle.py", "tests/reference/e3_retrieval_oracle.py"],
+      "coverage": "Совместимость локальной публикации, общий расчёт и сохранение исходных привязок",
+      "remaining": "Рабочая публикация и фактический post_load"
+    },
+    "B14.local": {
+      "test_id": "B14", "part": "local", "complete_test": false,
+      "paths": ["tests/unit/test_e6_runtime.py", "tests/unit/test_e6_protocol.py", "tests/integration/test_e6_coordinator.py", "tests/integration/test_e6_api.py"],
+      "reference_paths": ["tests/reference/e3_retrieval_oracle.py"],
+      "coverage": "Сроки, ограниченный пул, резерв, идемпотентность и недоставка",
+      "remaining": "Нормативная нагрузка, межпроцессное обслуживание и рабочий S_serve"
+    },
+    "B15.local": {
+      "test_id": "B15", "part": "local", "complete_test": false,
+      "paths": ["tests/unit/test_e6_state_store.py", "tests/unit/test_e6_trace.py", "tests/unit/test_e6_package.py"],
+      "reference_paths": ["tests/reference/e1_state_oracle.py"],
+      "coverage": "Файловое воспроизведение, повреждения, обязательная запись и завершённый исход",
+      "remaining": "Рабочие RTO/RPO, подписи, активация и откат"
+    },
+    "EXPL01": {
+      "test_id": "EXPL01", "part": "local", "complete_test": false,
+      "paths": ["tests/unit/test_e6_explanations.py", "tests/unit/test_e6_trace.py", "tests/integration/test_e6_coordinator.py"],
+      "reference_paths": ["tests/reference/e3_retrieval_oracle.py"],
+      "coverage": "Опоры, вклад и поддержка графа, источники основной и резервной ветвей, безопасный публичный текст",
+      "remaining": "Рабочая нагрузка и доступ к диагностике в Э6-09–Э6-11"
+    },
     "B05.numerics": {
       "test_id": "B05",
       "part": "numerics",

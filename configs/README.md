@@ -11,6 +11,7 @@
 | [synthetic_preparation.json](/configs/synthetic_preparation.json) | План искусственной подготовки: задача, семь периодов, объёмы выборок, seed и пределы ресурсов. Для Coveo не используется. |
 | [feature_schema.json](/configs/feature_schema.json) | Состав 93 столбцов Э3: порядок, типы, формулы, маски, преобразования и происхождение. `FeatureEngine` проверяет схему, `FeatureBatch` сохраняет её хеш. Это конкретный набор признаков, а не JSON Schema его формата. |
 | [ranker_recipe.json](/configs/ranker_recipe.json) | Закреплённые параметры LightGBM первого запуска. Валидатор сверяет паспорт, `train ranker` использует рецепт без подбора. |
+| [coveo_service.json](/configs/coveo_service.json) | Локальная публикация готового пакета и модели, проверяемые хеши, календарь, бюджеты загрузки и адаптер состояния. `timeout_ms=1000` ограничивает весь запрос от первого HTTP-байта; `reserve_ms=100` оставляет время на резерв, запись и возврат. Оба поля — целые, `0 < reserve_ms < timeout_ms` в пределах int64. Секрет владельца берётся из `COVEO_LOCAL_TOKEN`, не из JSON. |
 | [test_registry.json](/configs/test_registry.json) | Соответствие требований тестам и независимым эталонам. Не запускает тесты и не хранит их результаты. |
 
 Правила допуска задаёт [валидатор](/src/coveo_recsys/config/manifest.py) по
