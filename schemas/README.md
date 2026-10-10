@@ -21,8 +21,10 @@ JSON Schema внутри файлов не требует сетевого до�
 из тех же типов, что использует строгий JSON-кодек. Смысловые ограничения
 проверяются при создании записи.
 
-Конкретные 93 столбца Э3 заданы в [configs/feature_schema.json](/configs/feature_schema.json).
-Их исполняемый состав и порядок дополнительно проверяет `FeatureEngine`.
+Основные 93 столбца заданы в [configs/feature_schema.json](/configs/feature_schema.json),
+54 столбца без метаданных — в [configs/feature_schema_no_metadata.json](/configs/feature_schema_no_metadata.json).
+Их состав и порядок дополнительно проверяет `FeatureEngine`. Второй профиль не имеет
+категориальных столбцов; валидатор связывает его схему, квоты и рецепт с паспортом.
 
 Формат исходных CSV задаётся профилями в [/configs/](/configs/), а не этим
 каталогом. Основание: [ТЗ](/documents/implementation_spec.md#4-паспорт-запуска-и-управление-этапами).

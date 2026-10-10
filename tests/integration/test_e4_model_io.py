@@ -155,3 +155,24 @@ def test_load_of_absent_root_does_not_create_directory(tmp_path):
     with pytest.raises(ArtifactError):
         load_ranker(absent)
     assert not absent.exists()
+
+
+@pytest.mark.parametrize("damage", ["profile", "unknown_profile", "identity_profile", "recipe"])
+def test_model_profile_and_recipe_cannot_contradict_schema(tmp_path, model_payload, damage):
+    from coveo_recsys.ranking.load import load_ranker
+    from tests.reference.e4_cases import recipe
+
+    payload, original, _ = model_payload
+    summary = copy.deepcopy(original)
+    if damage == "profile":
+        summary["config_id"] = "graph_recent_popularity_no_provided_metadata"
+    elif damage == "unknown_profile":
+        summary["config_id"] = "unregistered"
+    elif damage == "identity_profile":
+        summary["identity"]["config_id"] = "graph_recent_popularity_no_provided_metadata"
+    else:
+        summary["recipe"] = recipe()
+        summary["recipe"]["training"]["num_boost_round"] = 1
+    write_model(tmp_path, payload, summary)
+    with pytest.raises(ArtifactError):
+        load_ranker(tmp_path)

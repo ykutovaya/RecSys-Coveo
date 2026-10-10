@@ -6,6 +6,12 @@ from dataclasses import dataclass
 from .common import InputValidationError, require_int64
 from .records import Record
 
+BASE_CONFIG_ID = "gcs_rk_v2_7"
+NO_METADATA_CONFIG_ID = "graph_recent_popularity_no_provided_metadata"
+SUPPORTED_CONFIG_IDS = (BASE_CONFIG_ID, NO_METADATA_CONFIG_ID)
+NO_METADATA_SOURCES = ("detail_detail", "detail_add", "detail_purchase", "recent", "popularity")
+NO_METADATA_QUOTAS = (50, 50, 50, 0, 0, 0, 20, 10)
+
 SOURCES = (
     "detail_detail",
     "detail_add",
@@ -48,3 +54,13 @@ class RetrievalConfig(Record):
             raise InputValidationError("Неверное затухание или порог нормы")
         if self.vector_epsilon != 1e-12:
             raise InputValidationError("Базовая конфигурация требует epsilon=1e-12")
+
+
+def validate_retrieval_profile(config_id: str, config: RetrievalConfig) -> None:
+    """Два профиля; обязательные квоты и общий M второго закреплены до расчёта."""
+    if config_id not in SUPPORTED_CONFIG_IDS:
+        raise InputValidationError("Неизвестный профиль отбора")
+    if config_id == NO_METADATA_CONFIG_ID and (
+        config.quotas != NO_METADATA_QUOTAS or config.max_candidates != 300
+    ):
+        raise InputValidationError("Профиль без метаданных требует фиксированные квоты и M=300")

@@ -4,6 +4,11 @@ import numpy as np
 
 from coveo_recsys.contracts import InputValidationError, NumericError, id_bytes
 from coveo_recsys.contracts.records import FeatureBatch
+from coveo_recsys.contracts.retrieval import (
+    BASE_CONFIG_ID,
+    NO_METADATA_CONFIG_ID,
+    SUPPORTED_CONFIG_IDS,
+)
 
 from .load import RankerModel
 from .matrix import feature_matrix
@@ -13,6 +18,14 @@ def predict(
     model: RankerModel, batch: FeatureBatch, *, catalog_sha256: str
 ) -> tuple[tuple[str, float], ...]:
     summary = model.summary
+    config_id = summary.get("config_id", BASE_CONFIG_ID)
+    if (
+        config_id not in SUPPORTED_CONFIG_IDS
+        or summary["identity"].get("config_id", config_id) != config_id
+        or tuple(summary["categorical_columns"])
+        != (() if config_id == NO_METADATA_CONFIG_ID else ("category",))
+    ):
+        raise InputValidationError("Схема признаков не соответствует профилю модели")
     if catalog_sha256 != summary["identity"]["catalog_sha256"]:
         raise InputValidationError("Каталог запроса не соответствует модели")
     if batch.skus != tuple(sorted(batch.skus, key=id_bytes)):

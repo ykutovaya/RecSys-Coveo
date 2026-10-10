@@ -17,7 +17,15 @@ from coveo_recsys.contracts.historical import (
 )
 from coveo_recsys.contracts.preparation import PreparedRequest
 from coveo_recsys.contracts.records import DetailHistoryItem, RequestContext
-from coveo_recsys.contracts.retrieval import SOURCES, RetrievalConfig
+from coveo_recsys.contracts.retrieval import (
+    BASE_CONFIG_ID,
+    NO_METADATA_CONFIG_ID,
+    NO_METADATA_SOURCES,
+    SOURCES,
+    SUPPORTED_CONFIG_IDS,
+    RetrievalConfig,
+    validate_retrieval_profile,
+)
 from coveo_recsys.numerics import (
     checked_subtract,
     compensated_sum,
@@ -47,12 +55,17 @@ class RetrievalIndex:
         package: HistoricalPackage,
         catalog_sha256: str,
         observed: Mapping[str, MetadataRecord] | None = None,
+        *,
+        config_id: str = BASE_CONFIG_ID,
     ) -> None:
+        if config_id not in SUPPORTED_CONFIG_IDS:
+            raise InputValidationError("Неизвестный профиль отбора")
         if package.schema_version != HISTORICAL_VERSION:
             raise InputValidationError("Неизвестная версия исторического пакета")
         if re.fullmatch(r"[0-9a-f]{64}", catalog_sha256) is None:
             raise InputValidationError("Нужен хеш закреплённого каталога")
         self.package = package
+        self.config_id = config_id
         self.catalog_sha256 = catalog_sha256
         keys = tuple(id_bytes(sku) for sku in package.catalog.skus)
         if len(set(keys)) != len(keys):
@@ -63,28 +76,29 @@ class RetrievalIndex:
         self._rows: dict[str, ItemContent] = {}
         self._edges: dict[str, dict[str, dict[int, tuple[float, int]]]] = {}
         count = len(self.positions)
-        content = package.content
-        for modality in (content.description, content.image):
-            if (
-                modality.vectors.ndim != 2
-                or modality.vectors.shape[0] != count
-                or modality.mask.shape != (count,)
-            ):
-                raise InputValidationError("Форма модальностей не соответствует каталогу")
-            if not np.isfinite(modality.vectors).all():
-                raise NumericError("Неконечные значения внутри пакета")
-        for i, sku in enumerate(package.catalog.skus):
-            code = int(content.category_codes[i])
-            if not 0 <= code <= len(content.categories):
-                raise InputValidationError("Неизвестный код категории")
-            self._rows[sku] = ItemContent(
-                content.description.vectors[i],
-                content.image.vectors[i],
-                bool(content.description.mask[i]),
-                bool(content.image.mask[i]),
-                content.categories[code - 1] if code else None,
-                int(content.price_bucket[i]) if content.price_mask[i] else None,
-            )
+        if config_id == BASE_CONFIG_ID:
+            content = package.content
+            for modality in (content.description, content.image):
+                if (
+                    modality.vectors.ndim != 2
+                    or modality.vectors.shape[0] != count
+                    or modality.mask.shape != (count,)
+                ):
+                    raise InputValidationError("Форма модальностей не соответствует каталогу")
+                if not np.isfinite(modality.vectors).all():
+                    raise NumericError("Неконечные значения внутри пакета")
+            for i, sku in enumerate(package.catalog.skus):
+                code = int(content.category_codes[i])
+                if not 0 <= code <= len(content.categories):
+                    raise InputValidationError("Неизвестный код категории")
+                self._rows[sku] = ItemContent(
+                    content.description.vectors[i],
+                    content.image.vectors[i],
+                    bool(content.description.mask[i]),
+                    bool(content.image.mask[i]),
+                    content.categories[code - 1] if code else None,
+                    int(content.price_bucket[i]) if content.price_mask[i] else None,
+                )
         if tuple(g.relation for g in package.graphs.relations) != RELATIONS:
             raise InputValidationError("Неверный состав графов")
         for graph in package.graphs.relations:
@@ -109,22 +123,25 @@ class RetrievalIndex:
             or not np.isfinite(package.statistics.popularity).all()
         ):
             raise NumericError("Некорректная популярность")
-        for sku, record in (observed or {}).items():
-            id_bytes(sku)
-            if sku != record.sku or sku in self.positions:
-                raise InputValidationError("Внешние метаданные не заменяют исторический каталог")
-            description = normalize_external_vector(
-                record.description, content.description.vectors.shape[1]
-            )
-            image = normalize_external_vector(record.image, content.image.vectors.shape[1])
-            self._rows[sku] = ItemContent(
-                description.vector,
-                image.vector,
-                description.mask,
-                image.mask,
-                record.category or None,
-                record.price_bucket,
-            )
+        if config_id == BASE_CONFIG_ID:
+            for sku, record in (observed or {}).items():
+                id_bytes(sku)
+                if sku != record.sku or sku in self.positions:
+                    raise InputValidationError(
+                        "Внешние метаданные не заменяют исторический каталог"
+                    )
+                description = normalize_external_vector(
+                    record.description, content.description.vectors.shape[1]
+                )
+                image = normalize_external_vector(record.image, content.image.vectors.shape[1])
+                self._rows[sku] = ItemContent(
+                    description.vector,
+                    image.vector,
+                    description.mask,
+                    image.mask,
+                    record.category or None,
+                    record.price_bucket,
+                )
 
     def row(self, sku: str) -> ItemContent | None:
         return self._rows.get(sku)
@@ -216,9 +233,11 @@ def score_request(
     source_runtime: Mapping[str, str] | None = None,
 ) -> QueryScores:
     _check_context(context, index)
+    validate_retrieval_profile(index.config_id, config)
     runtime = dict(source_runtime or {})
+    active_sources = NO_METADATA_SOURCES if index.config_id == NO_METADATA_CONFIG_ID else SOURCES
     if any(
-        key not in SOURCES or not isinstance(reason, str) or not reason
+        key not in active_sources or not isinstance(reason, str) or not reason
         for key, reason in runtime.items()
     ):
         raise InputValidationError("Неизвестный источник или пустая причина отключения")
@@ -247,7 +266,8 @@ def score_request(
             for j, value in weighted.items():
                 values[relation][j] += value
     history_available = {}
-    for name in ("description", "image"):
+    modalities = ("description", "image") if index.config_id == BASE_CONFIG_ID else ()
+    for name in modalities:
         modality = getattr(package.content, name)
         dimension = modality.vectors.shape[1]
         vector_terms = []
@@ -268,9 +288,11 @@ def score_request(
             values[name] = _dot_blocks(modality.vectors, normalized.vector, config.block_size)
         else:
             reasons[name] = "empty_history" if not history else "history_vector_unavailable"
-    search = context.prefix.search
     search_age = 0
-    if search is None:
+    search = context.prefix.search if index.config_id == BASE_CONFIG_ID else None
+    if index.config_id == NO_METADATA_CONFIG_ID:
+        pass
+    elif search is None:
         reasons["search"] = "search_absent"
     elif package.metadata_contract["query_description_compatibility"] not in {
         "publisher_statement",

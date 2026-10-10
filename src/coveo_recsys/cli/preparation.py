@@ -797,10 +797,14 @@ class Preparation:
         active = [p.name for p in plan.periods if p.sample_size]
         evaluation_admission = None
         evaluation_bytes = None
-        if plan.scope == "actual" and any(name not in {"A_G", "B"} for name in active):
-            if active != ["C_smoke"] or evaluation_config is None:
+        if (
+            "D" in active
+            or plan.scope == "actual"
+            and any(name not in {"A_G", "B"} for name in active)
+        ):
+            if active not in (["C_smoke"], ["D"]) or evaluation_config is None:
                 raise InputValidationError(
-                    "C_smoke требует связанного post_training; остальные периоды закрыты"
+                    "C_smoke требует post_training, D — pre_D; остальные периоды закрыты"
                 )
             from coveo_recsys.cli.admission import require_evaluation_preparation
 

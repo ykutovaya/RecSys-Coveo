@@ -55,13 +55,19 @@ def validator_fingerprint_bytes() -> bytes:
             "evidence.py",
         )
     }
-    for name in ("contracts/common.py", "artifacts/__init__.py", "artifacts/store.py"):
+    for name in (
+        "contracts/common.py",
+        "contracts/retrieval.py",
+        "artifacts/__init__.py",
+        "artifacts/store.py",
+    ):
         inventory[name] = sha256_bytes(package.joinpath(name).read_bytes())
     for name in (
         "schemas/manifest.schema.json",
         "schemas/feature.schema.json",
         "configs/test_registry.json",
         "configs/ranker_recipe.json",
+        "configs/feature_schema_no_metadata.json",
     ):
         inventory[name] = sha256_bytes(resource_bytes(name))
     return canonical_json_bytes(inventory)

@@ -28,6 +28,7 @@ class DatasetAccess:
         run_id: str,
         scope: str = "synthetic",
         audit: Callable[[dict[str, Any]], None] | None = None,
+        d_admission: Callable[[], str] | None = None,
     ) -> None:
         if scope not in {"synthetic", "actual"}:
             raise InputValidationError("Неизвестная область доступа")
@@ -36,6 +37,7 @@ class DatasetAccess:
         self.run_id = run_id
         self.scope = scope
         self.audit = audit
+        self.d_admission = d_admission
 
     def read(
         self, relative_path: str, kind: type[R], *, purpose: str
@@ -48,7 +50,11 @@ class DatasetAccess:
             and "\\" not in relative_path
             and len(parts) == 3
             and parts[0] == "datasets"
-            and parts[1] in {"A_G", "B", "C_smoke"}
+            and (
+                parts[1] in {"A_G", "B", "C_smoke"}
+                or parts[1] == "D"
+                and self.d_admission is not None
+            )
             and (purpose, parts[2], kind.__name__)
             in {
                 ("prefix", "prefixes.parquet", "PreparedRequest"),
@@ -67,6 +73,9 @@ class DatasetAccess:
         try:
             if not allowed:
                 raise InputValidationError("Маршрут закрыт для указанной цели чтения")
+            if parts[1] == "D":
+                if self.d_admission is None or not self.d_admission():
+                    raise InputValidationError("Нет допуска pre_D")
             destination = self.root / relative_path
             if destination.resolve() != destination or any(
                 (self.root.joinpath(*parts[:i])).is_symlink() for i in range(1, len(parts) + 1)
@@ -105,6 +114,8 @@ class DatasetAccess:
 
         def records() -> Iterator[tuple[str, tuple[R, ...]]]:
             try:
+                if parts[1] == "D" and (self.d_admission is None or not self.d_admission()):
+                    raise InputValidationError("Нет допуска pre_D")
                 yield from iter_sessions(
                     destination,
                     kind,

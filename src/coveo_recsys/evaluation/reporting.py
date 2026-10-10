@@ -1,4 +1,4 @@
-"""Соединение закрытой таблицы ответов с целями и воспроизводимый отчёт C_smoke."""
+"""Соединение закрытой таблицы ответов с целями и отчёт C_smoke/D."""
 
 from __future__ import annotations
 
@@ -13,10 +13,16 @@ from typing import Any
 
 from coveo_recsys.artifacts import canonical_json_bytes, sha256_file
 from coveo_recsys.contracts import InputValidationError
-from coveo_recsys.contracts.evaluation import POLICIES, EvaluationRecord, ReplayRecord
+from coveo_recsys.contracts.evaluation import (
+    FINAL_POLICIES,
+    POLICIES,
+    EvaluationRecord,
+    ReplayRecord,
+)
 from coveo_recsys.contracts.historical import HistoricalPackage
 from coveo_recsys.contracts.preparation import EVALUATION_PROTOCOL, PreparationPlan, PreparedRequest
 from coveo_recsys.contracts.records import Branch, RequestResult
+from coveo_recsys.contracts.retrieval import NO_METADATA_CONFIG_ID
 from coveo_recsys.contracts.serialization import from_json
 from coveo_recsys.contracts.training import TargetRecord
 from coveo_recsys.data.access import DatasetAccess
@@ -32,6 +38,7 @@ from coveo_recsys.evaluation.metrics import (
 )
 
 ESTIMATES = (*POLICIES, "GCS+Rk-P", "GCS+Rk-R")
+FINAL_ESTIMATES = (*ESTIMATES, NO_METADATA_CONFIG_ID, "GCS+Rk-" + NO_METADATA_CONFIG_ID)
 
 
 def _keys(value: Any, expected: set[str], name: str) -> None:
@@ -46,15 +53,20 @@ def validate_evaluation_plan(evaluation_plan: dict[str, Any], plan: PreparationP
         {"period", "policies", "k", "diagnostic_depth", "intervals"},
         "плана оценки",
     )
+    final = evaluation_plan["period"] == "D"
+    policies = FINAL_POLICIES if final else POLICIES
+    estimates = FINAL_ESTIMATES if final else ESTIMATES
     if (
-        evaluation_plan["period"] != "C_smoke"
-        or evaluation_plan["policies"] != list(POLICIES)
+        evaluation_plan["period"] not in {"C_smoke", "D"}
+        or evaluation_plan["policies"] != list(policies)
         or type(evaluation_plan["k"]) is not int
         or evaluation_plan["k"] != 20
         or type(evaluation_plan["diagnostic_depth"]) is not int
         or evaluation_plan["diagnostic_depth"] <= 0
     ):
-        raise InputValidationError("Нужны C_smoke, GCS+Rk/P/R, K=20 и положительная глубина")
+        raise InputValidationError(
+            "Нужны допустимый период, фиксированные политики, K=20 и положительная глубина"
+        )
     inference = evaluation_plan["intervals"]
     _keys(
         inference,
@@ -68,7 +80,7 @@ def validate_evaluation_plan(evaluation_plan: dict[str, Any], plan: PreparationP
         },
         "плана интервалов",
     )
-    period = next(period for period in plan.periods if period.name == "C_smoke")
+    period = next(period for period in plan.periods if period.name == evaluation_plan["period"])
     width = period.end_ms - period.start_ms - plan.task.horizon_ms - plan.task.gap_ms
     step = inference["grid_step_ms"]
     if type(step) is not int or step <= 0 or width <= 0 or width % step:
@@ -83,9 +95,9 @@ def validate_evaluation_plan(evaluation_plan: dict[str, Any], plan: PreparationP
         or inference["mc_error_method"] != MC_METHOD
     ):
         raise InputValidationError("Неверные длины блоков либо метод MC-погрешности")
-    _keys(inference["dependence"], set(ESTIMATES), "предпосылок пяти оценок")
-    _keys(inference["half_width_fraction"], set(ESTIMATES), "полуширин пяти оценок")
-    for name in ESTIMATES:
+    _keys(inference["dependence"], set(estimates), "предпосылок оценок")
+    _keys(inference["half_width_fraction"], set(estimates), "полуширин оценок")
+    for name in estimates:
         assumptions = inference["dependence"][name]
         _keys(assumptions, {"supported", "assumptions"}, "описания зависимости")
         if (
@@ -119,7 +131,7 @@ def _diagnostics(record: ReplayRecord, depth: int) -> dict[str, Any]:
         _keys(source, {"skus", "depth", "truncated", "reason"}, "списка источника")
         if type(source["depth"]) is not int or source["depth"] != depth:
             raise InputValidationError("Глубина источников отличается от фиксированного плана")
-    if record.policy != "GCS+Rk" and (
+    if record.policy in {"P", "R"} and (
         values["feature_mask_counts"] is not None
         or values["feature_rows"] is not None
         or values["mask_reason"] != "not_applicable"
@@ -287,19 +299,22 @@ def _aggregate_sensitivity(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _evaluation_rows(
-    path: Path, plan: PreparationPlan, check_budget: Callable[[], None]
+    path: Path,
+    plan: PreparationPlan,
+    check_budget: Callable[[], None],
+    policies: Sequence[str] = POLICIES,
 ) -> Iterator[EvaluationRecord]:
-    """Один проход трёх политик; подробности удерживаются лишь для одной сессии."""
+    """Один проход политик; подробности удерживаются лишь для одной сессии."""
     for _, records in iter_sessions(
         path,
         EvaluationRecord,
         batch_size=plan.chunk_size,
-        max_session_records=len(POLICIES),
+        max_session_records=len(policies),
         max_session_bytes=plan.max_session_bytes,
     ):
         check_budget()
-        if len(records) != len(POLICIES) or {record.policy for record in records} != set(POLICIES):
-            raise InputValidationError("Изменилась полная таблица оценок трёх политик")
+        if len(records) != len(policies) or {record.policy for record in records} != set(policies):
+            raise InputValidationError("Изменилась полная таблица запланированных оценок")
         yield from records
 
 
@@ -314,13 +329,18 @@ def summarize_replay(
     check_budget: Callable[[], None],
     *,
     selected_ids: Sequence[str] | None = None,
+    d_admission: Callable[[], str] | None = None,
 ) -> dict[str, Any]:
-    """Все выбранные SID, три политики; цели присоединяются после закрытых ответов.
+    """Все выбранные SID и политики; цели присоединяются после закрытых ответов.
 
     Идентичность нового потребителя и общие ресурсы добавляет вызывающая команда.
     Производитель подготовки закреплён отдельно; обучение здесь не вызывается.
     """
     validate_evaluation_plan(evaluation_plan, plan)
+    period_name = evaluation_plan["period"]
+    policy_names = tuple(evaluation_plan["policies"])
+    if period_name == "D" and (d_admission is None or not d_admission()):
+        raise InputValidationError("Нет допуска pre_D")
     check_budget()
     if source.resolve() == destination.resolve():
         raise InputValidationError("Оценка должна храниться отдельно от принятой подготовки")
@@ -330,10 +350,10 @@ def summarize_replay(
         or from_json(prepared["plan_json"].encode("utf-8"), PreparationPlan) != plan
     ):
         raise InputValidationError("Изменён переданный отчёт или план подготовки")
-    selected = prepared["selection"].get("C_smoke", [])
+    selected = prepared["selection"].get(period_name, [])
     if not isinstance(selected, list) or len(set(selected)) != len(selected):
-        raise InputValidationError("Некорректная выборка C_smoke")
-    period_counts = prepared["period_counts"]["C_smoke"]
+        raise InputValidationError("Некорректная выборка оценочного периода")
+    period_counts = prepared["period_counts"][period_name]
     if period_counts["selected"] != len(selected) or prepared["N_obs"] != len(selected):
         raise InputValidationError("Выборка и счётчики подготовки не совпадают")
     prepared_selected_size = len(selected)
@@ -361,9 +381,12 @@ def summarize_replay(
         code_sha256=prepared["source_sha256"],
         run_id=prepared["run_id"],
         scope=prepared["scope"],
+        d_admission=d_admission,
     )
-    prefixes = access.read("datasets/C_smoke/prefixes.parquet", PreparedRequest, purpose="prefix")
-    targets = access.read("datasets/C_smoke/targets.parquet", TargetRecord, purpose="labels")
+    prefixes = access.read(
+        f"datasets/{period_name}/prefixes.parquet", PreparedRequest, purpose="prefix"
+    )
+    targets = access.read(f"datasets/{period_name}/targets.parquet", TargetRecord, purpose="labels")
     scanned_prefixes: set[str] = set()
     scanned_targets: set[str] = set()
 
@@ -379,15 +402,18 @@ def summarize_replay(
     prefixes = (group for group in prefixes if included(group, scanned_prefixes))
     targets = (group for group in targets if included(group, scanned_targets))
     answers = iter_sessions(
-        answers_path, ReplayRecord, max_session_records=3, max_session_bytes=plan.max_session_bytes
+        answers_path,
+        ReplayRecord,
+        max_session_records=len(policy_names),
+        max_session_bytes=plan.max_session_bytes,
     )
-    period = next(period for period in plan.periods if period.name == "C_smoke")
+    period = next(period for period in plan.periods if period.name == period_name)
     inference = evaluation_plan["intervals"]
     sku_slices = build_sku_slices(history)
     catalog = set(history.catalog.skus)
-    paired_rows: dict[str, list[EvaluationRow]] = {name: [] for name in POLICIES}
+    paired_rows: dict[str, list[EvaluationRow]] = {name: [] for name in policy_names}
     times: list[int] = []
-    hits: dict[str, list[int]] = {name: [] for name in POLICIES}
+    hits: dict[str, list[int]] = {name: [] for name in policy_names}
     seen: set[str] = set()
     output_path = destination / "replay/sessions.parquet"
     with TableWriter(
@@ -420,11 +446,11 @@ def summarize_replay(
                 < period.end_ms - plan.task.horizon_ms - plan.task.gap_ms
                 or target.horizon_ms != plan.task.horizon_ms
             ):
-                raise InputValidationError("Запрос/цель не соответствует плану и календарю C_smoke")
+                raise InputValidationError("Запрос/цель не соответствует плану и календарю оценки")
             saved = {record.policy: record for record in answer_group[1]}
-            if len(answer_group[1]) != len(POLICIES) or set(saved) != set(POLICIES):
+            if len(answer_group[1]) != len(policy_names) or set(saved) != set(policy_names):
                 raise InputValidationError(
-                    "Для каждой сессии нужны ровно три запланированные политики"
+                    "Для каждой сессии нужны все запланированные политики без повторов"
                 )
             pair_details = {
                 "session_id": sid,
@@ -433,7 +459,7 @@ def summarize_replay(
                 "purchases": [{"sku": sku} for sku in target.purchases],
             }
             evaluated = []
-            for policy in POLICIES:
+            for policy in policy_names:
                 record = saved[policy]
                 diagnostic = _diagnostics(record, evaluation_plan["diagnostic_depth"])
                 evaluation, details = evaluate_session(
@@ -488,7 +514,7 @@ def summarize_replay(
             raise InputValidationError("Входы изменились во время оценки")
         check_budget()
     # Подробные словари больше не нужны: сводки читают уже закрытую таблицу.
-    output_info = table_info(output_path, EvaluationRecord, "C_smoke", "evaluation")
+    output_info = table_info(output_path, EvaluationRecord, period_name, "evaluation")
     accumulators = {
         policy: MetricsAccumulator(
             n_eligible=period_counts["eligible"],
@@ -496,12 +522,12 @@ def summarize_replay(
             exclusions=prepared["exclusions"],
             k=evaluation_plan["k"],
         )
-        for policy in POLICIES
+        for policy in policy_names
     }
 
     def sensitivity_rows() -> Iterator[dict[str, Any]]:
         # Тот же проход обновляет три сводки и отдаёт диагностику кратностей.
-        for record in _evaluation_rows(output_path, plan, check_budget):
+        for record in _evaluation_rows(output_path, plan, check_budget, policy_names):
             details = record.parsed_json
             accumulators[record.policy].add(record.evaluation, details)
             if record.policy == "GCS+Rk":
@@ -509,16 +535,17 @@ def summarize_replay(
 
     sensitivity_summary = _aggregate_sensitivity(sensitivity_rows())
     policies = {policy: accumulator.finish() for policy, accumulator in accumulators.items()}
-    if len({policies[name]["counts"]["N"] for name in POLICIES}) != 1:
+    if len({policies[name]["counts"]["N"] for name in policy_names}) != 1:
         raise InputValidationError("Политики имеют разные целевые знаменатели")
     pairs = {
         "GCS+Rk-" + name: paired_metrics(paired_rows["GCS+Rk"], paired_rows[name])
-        for name in ("P", "R")
+        for name in policy_names[1:]
     }
     intervals = {}
-    for name in ESTIMATES:
+    estimates = {name: (name, None) for name in policy_names}
+    estimates.update({"GCS+Rk-" + name: ("GCS+Rk", name) for name in policy_names[1:]})
+    for name, (left, right) in estimates.items():
         check_budget()
-        left, right = (name, None) if name in POLICIES else ("GCS+Rk", name.rsplit("-", 1)[1])
         assumptions = inference["dependence"][name]
         metric, details = calendar_intervals(
             times,
@@ -536,20 +563,20 @@ def summarize_replay(
             half_width_fraction=inference["half_width_fraction"][name],
         )
         intervals[name] = dict(metric=asdict(metric), details=details)
-        point = policies[name]["metrics"]["Hit@20"] if name in POLICIES else pairs[name]
+        point = policies[name]["metrics"]["Hit@20"] if name in policy_names else pairs[name]
         if metric.value != point["value"] or metric.denominator != point["denominator"]:
             raise InputValidationError("Точечная и интервальная оценки не совпали")
     if (
         sha256_file(source / "reports/preparation.json") != report_hash
         or table_info(answers_path, ReplayRecord) != answers_info
-        or table_info(output_path, EvaluationRecord, "C_smoke", "evaluation") != output_info
+        or table_info(output_path, EvaluationRecord, period_name, "evaluation") != output_info
     ):
         raise InputValidationError("Входы или таблица оценок изменились во время агрегации")
     check_budget()
     frequencies = sorted(int(value) for value in history.statistics.detail_counts)
     return dict(
         status="completed",
-        period="C_smoke",
+        period=period_name,
         evaluation_protocol=EVALUATION_PROTOCOL,
         replay_mode="ideal_deterministic",
         telemetry_completeness="unknown",
@@ -596,12 +623,26 @@ def summarize_replay(
         multiplicity_sensitivity=sensitivity_summary,
         tables={"replay/sessions.parquet": output_info},
         input_answers=answers_info,
+        **(
+            {
+                "metadata_sensitivity": {
+                    "policy": NO_METADATA_CONFIG_ID,
+                    "confirmatory": False,
+                    "comparison": "GCS+Rk-" + NO_METADATA_CONFIG_ID,
+                    "selection": "not_used",
+                }
+            }
+            if period_name == "D"
+            else {}
+        ),
         interpretation=dict(
             quality="conditional_on_registered_purchase",
             service_load="not_measured",
             training_cost="not_supplied_to_reporting",
             full_process_resources="reported_by_command",
-            next_comparison="not_selected_pilot_report_requires_review",
+            next_comparison="review_final_result_without_retuning"
+            if period_name == "D"
+            else "not_selected_pilot_report_requires_review",
             incomplete_telemetry="not_corrected_by_bootstrap",
         ),
     )
@@ -650,6 +691,7 @@ def render_report(summary: dict[str, Any]) -> str:
         "pairs": "Парные сравнения",
         "intervals": "Интервалы и достаточность",
         "multiplicity_sensitivity": "Чувствительность к кратностям",
+        "metadata_sensitivity": "Чувствительность к метаданным (не подтверждающая гипотеза)",
         "slice_plan": "Зафиксированные разрезы",
         "evaluation_plan": "План оценки",
         "interpretation": "Границы интерпретации и следующее действие",

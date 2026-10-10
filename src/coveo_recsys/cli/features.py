@@ -16,10 +16,15 @@ from coveo_recsys.artifacts import (
     strict_json_loads,
 )
 from coveo_recsys.config import validate_feature_schema
+from coveo_recsys.config.recipes import get_ranker_recipe
 from coveo_recsys.contracts import InputValidationError, require_int64
 from coveo_recsys.contracts.preparation import PreparedRequest
 from coveo_recsys.contracts.records import CandidateResult, FeatureBatch
-from coveo_recsys.contracts.retrieval import RetrievalConfig
+from coveo_recsys.contracts.retrieval import (
+    NO_METADATA_CONFIG_ID,
+    RetrievalConfig,
+    validate_retrieval_profile,
+)
 from coveo_recsys.data.access import DatasetAccess
 from coveo_recsys.data.metadata import open_metadata_source
 from coveo_recsys.data.prepared import TableWriter, read_report, table_info, verify_tables
@@ -53,6 +58,7 @@ def run_features(
     run_id: str,
     *,
     period: str,
+    required_config_id: str | None = None,
     before_publish: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     from coveo_recsys.cli.preparation import _peak_memory
@@ -99,12 +105,18 @@ def run_features(
     schema = strict_json_loads(schema_bytes)
     if validate_feature_schema(schema):
         raise InputValidationError("Неверная схема признаков")
+    config_id = schema["config_id"]
+    recipe = get_ranker_recipe(config_id)
+    if required_config_id is not None and config_id != required_config_id:
+        raise InputValidationError("Команда требует схему профиля без метаданных")
+    if config_id == NO_METADATA_CONFIG_ID and "metadata_path" in settings:
+        raise InputValidationError("Профиль без метаданных не использует metadata_path")
     configuration = dict(settings["retrieval"])
     if "quotas" in configuration:
         configuration["quotas"] = tuple(configuration["quotas"])
     config = RetrievalConfig(**configuration)
+    validate_retrieval_profile(config_id, config)
     from coveo_recsys.cli.admission import require_training_admission
-    from coveo_recsys.config.resources import resource_bytes
 
     def admission() -> str | None:
         return require_training_admission(
@@ -113,7 +125,7 @@ def run_features(
             prepared=prepared,
             historical=head,
             feature_schema_bytes=schema_bytes,
-            recipe=strict_json_loads(resource_bytes("configs/ranker_recipe.json")),
+            recipe=recipe,
             retrieval=asdict(config),
         )
 
@@ -123,6 +135,7 @@ def run_features(
     store = LocalArtifactStore(destination)
     identity = {
         "format_version": "features_v1",
+        "config_id": config_id,
         "run_id": run_id,
         "scope": prepared["scope"],
         "period": period,
@@ -257,7 +270,7 @@ def run_features(
     check_budget()
     unknown = observed - set(package.catalog.skus)
     observed_records = {}
-    if unknown:
+    if unknown and config_id != NO_METADATA_CONFIG_ID:
         if "metadata_path" not in settings:
             raise InputValidationError(
                 "Для SKU вне каталога нужна закреплённая поставка метаданных"
@@ -278,7 +291,7 @@ def run_features(
             item.sku: item
             for item in metadata.read(sorted(unknown, key=lambda s: s.encode("utf-8")))
         }
-    index = RetrievalIndex(package, catalog_hash, observed_records)
+    index = RetrievalIndex(package, catalog_hash, observed_records, config_id=config_id)
     engine = FeatureEngine(index, schema, config)
     stage = "features"
     processed = 0

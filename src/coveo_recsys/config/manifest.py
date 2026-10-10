@@ -23,6 +23,7 @@ from coveo_recsys.artifacts import (
     strict_json_loads,
 )
 from coveo_recsys.contracts.common import Stage, ValidationIssue, ValidationResult
+from coveo_recsys.contracts.retrieval import NO_METADATA_CONFIG_ID, SUPPORTED_CONFIG_IDS
 
 from .evidence import validate_final_evaluation, validate_online_plan, validate_online_results
 from .recipes import resolved_recipe_issues
@@ -135,7 +136,7 @@ def required_checks(
 
 def verification_configuration(manifest: Mapping[str, Any]) -> dict[str, Any]:
     """Закреплённые входы и настройки, общие для отчёта этапа."""
-    return {
+    inputs = {
         key: deepcopy(manifest[key])
         for key in (
             "evaluation_protocol",
@@ -153,6 +154,11 @@ def verification_configuration(manifest: Mapping[str, Any]) -> dict[str, Any]:
             "module_configurations",
         )
     }
+    # Фактический размер D известен после подготовки; лимит отбора закреплён в before_D.
+    counts = inputs["dataset"]["session_sampling"]["session_count_by_period"]
+    if isinstance(counts, dict):
+        counts.pop("period_D", None)
+    return inputs
 
 
 def plan_inputs(manifest: Mapping[str, Any], name: str) -> dict[str, Any]:
@@ -182,6 +188,25 @@ def plan_inputs(manifest: Mapping[str, Any], name: str) -> dict[str, Any]:
     else:
         raise ValueError("Неизвестный план")
     return inputs
+
+
+def fixed_policy_without_selection(manifest: Mapping[str, Any]) -> bool:
+    """Единственная заранее заданная база, без результатов или плана подбора."""
+    selection, inference = manifest["selection"], manifest["inference"]
+    registered = selection["registered_configurations"]
+    return (
+        inference["primary_estimate_type"] == "single_policy"
+        and inference["primary_policy_config_id"] == "gcs_rk_v2_7"
+        and manifest["base_model"]["config_id"] == "gcs_rk_v2_7"
+        and selection["primary_comparison"] is None
+        and isinstance(registered, list)
+        and len(registered) == 1
+        and registered[0]["config_id"] == "gcs_rk_v2_7"
+        and manifest["freeze"]["plan_references"]["before_C_select"] is None
+        and manifest["evidence"].get("selection_plan") is None
+        and manifest["artifacts"]["selected_policies_sha256"] is None
+        and manifest["artifacts"]["selection_report_sha256"] is None
+    )
 
 
 def _enabled(manifest: Mapping[str, Any], condition: str) -> bool:
@@ -342,8 +367,13 @@ class _Validation:
                             "module_recipe_changed",
                             "Изменён нормативный контракт расширения",
                         )
-        if self.m["base_model"]["config_id"] == "gcs_rk_v2_7":
-            if self.m["base_model"] != self.template["base_model"]:
+        if self.m["base_model"]["config_id"] in SUPPORTED_CONFIG_IDS:
+            expected_base = deepcopy(self.template["base_model"])
+            if self.m["base_model"]["config_id"] == NO_METADATA_CONFIG_ID:
+                expected_base["config_id"] = NO_METADATA_CONFIG_ID
+                for source in ("description", "image", "search"):
+                    expected_base["quotas"][source] = 0
+            if self.m["base_model"] != expected_base:
                 self.issue("base_model", "baseline_changed", "Изменён закреплённый рецепт базы")
             for key, expected in self.template["ranker"].items():
                 if key != "resolved_parameters" and self.m["ranker"][key] != expected:
@@ -488,15 +518,17 @@ class _Validation:
                         for column in feature.get("columns", [])
                         if column.get("dtype") == "category"
                     ]
-                    if (
-                        _at(self.m, "ranker.resolved_parameters.dataset.categorical_feature")
-                        != categories
-                        or len(categories) != 1
+                    if _at(
+                        self.m, "ranker.resolved_parameters.dataset.categorical_feature"
+                    ) != categories or (
+                        categories != []
+                        if self.m["base_model"]["config_id"] == NO_METADATA_CONFIG_ID
+                        else len(categories) != 1
                     ):
                         self.issue(
                             "ranker.resolved_parameters.dataset.categorical_feature",
                             "categorical_binding",
-                            "Единственный категориальный столбец не совпал со схемой",
+                            "Категориальные столбцы не соответствуют профилю и схеме",
                         )
                 except (ValueError, TypeError, AttributeError) as exc:
                     self.issue("reproducibility.feature_schema_sha256", "feature_schema", str(exc))
@@ -785,7 +817,7 @@ class _Validation:
 
     def plans(self) -> None:
         names = []
-        if self.index >= 3:
+        if self.index >= 3 and not (self.index >= 4 and fixed_policy_without_selection(self.m)):
             names.append(("before_C_select", "selection_plan"))
         if self.index >= 4:
             names.append(("before_D", "evaluation_plan"))
@@ -950,7 +982,11 @@ class _Validation:
                 self.check_variant_load(load, "evidence.load")
         if self.index >= 3:
             configs = self.need("selection.registered_configurations")
-            plan = self.evidence("selection_plan")
+            plan = (
+                None
+                if self.index >= 4 and fixed_policy_without_selection(self.m)
+                else self.evidence("selection_plan")
+            )
             if configs and len({c["config_id"] for c in configs}) != len(configs):
                 self.issue(
                     "selection.registered_configurations", "duplicate_config", "Повтор config_id"
@@ -1116,15 +1152,24 @@ class _Validation:
                     )
 
     def pre_d(self) -> None:
-        selected = self.read_hash(
-            self.need("artifacts.selected_policies_sha256"),
-            "artifacts.selected_policies_sha256",
-            envelope=True,
+        fixed = fixed_policy_without_selection(self.m)
+        selected = (
+            None
+            if fixed
+            else self.read_hash(
+                self.need("artifacts.selected_policies_sha256"),
+                "artifacts.selected_policies_sha256",
+                envelope=True,
+            )
         )
-        selection = self.read_hash(
-            self.need("artifacts.selection_report_sha256"),
-            "artifacts.selection_report_sha256",
-            envelope=True,
+        selection = (
+            None
+            if fixed
+            else self.read_hash(
+                self.need("artifacts.selection_report_sha256"),
+                "artifacts.selection_report_sha256",
+                envelope=True,
+            )
         )
         pair = self.m["selection"]["primary_comparison"]
         identifiers = (

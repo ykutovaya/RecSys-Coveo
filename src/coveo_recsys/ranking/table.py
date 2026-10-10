@@ -59,7 +59,7 @@ def build_training_table(
     columns = numeric_columns + categorical_columns
     if (
         not re.fullmatch(r"[0-9a-f]{64}", feature_schema_sha256)
-        or categorical_columns != ("category",)
+        or categorical_columns not in (("category",), ())
         or len(set(columns)) != len(columns)
     ):
         raise InputValidationError("Несогласованная схема обучающей таблицы")

@@ -11,7 +11,14 @@ import numpy as np
 from coveo_recsys.contracts import InputValidationError, NumericError, id_bytes
 from coveo_recsys.contracts.historical import RELATIONS
 from coveo_recsys.contracts.records import Branch, CandidateResult, FeatureBatch, RequestContext
-from coveo_recsys.contracts.retrieval import SOURCES, RetrievalConfig
+from coveo_recsys.contracts.retrieval import (
+    BASE_CONFIG_ID,
+    NO_METADATA_SOURCES,
+    SOURCES,
+    SUPPORTED_CONFIG_IDS,
+    RetrievalConfig,
+    validate_retrieval_profile,
+)
 from coveo_recsys.numerics import (
     MultiplicitySemantics,
     checked_subtract,
@@ -22,8 +29,11 @@ from coveo_recsys.numerics import (
 from coveo_recsys.retrieval.scores import QueryScores, RetrievalIndex, score_request
 
 
-def _columns() -> list[tuple[str, str, str | None, str]]:
+def _columns(config_id: str = BASE_CONFIG_ID) -> list[tuple[str, str, str | None, str]]:
     """Исполняемый набор столбцов, не интерпретатор формул из JSON."""
+    if config_id not in SUPPORTED_CONFIG_IDS:
+        raise InputValidationError("Неизвестный профиль признаков")
+    with_metadata = config_id == BASE_CONFIG_ID
     result: list[tuple[str, str, str | None, str]] = []
 
     def add(name: str, dtype: str = "float64", *, masked: bool = False, log: bool = False) -> None:
@@ -33,7 +43,7 @@ def _columns() -> list[tuple[str, str, str | None, str]]:
         if masked:
             result.append((name + "_mask", "bool", None, "identity"))
 
-    for source in SOURCES:
+    for source in SOURCES if with_metadata else NO_METADATA_SOURCES:
         add("origin_" + source, "bool")
         add("score_" + source, masked=True)
         add("rank_" + source, masked=True)
@@ -41,11 +51,12 @@ def _columns() -> list[tuple[str, str, str | None, str]]:
     for relation in RELATIONS:
         add("last_" + relation, masked=True)
         add("support_" + relation, masked=True, log=True)
-    for modality in ("description", "image"):
-        add("last_" + modality, masked=True)
-        add("history_" + modality + "_available", "bool")
-        add("item_" + modality + "_available", "bool")
-    add("search_age", masked=True, log=True)
+    if with_metadata:
+        for modality in ("description", "image"):
+            add("last_" + modality, masked=True)
+            add("history_" + modality + "_available", "bool")
+            add("item_" + modality + "_available", "bool")
+        add("search_age", masked=True, log=True)
     add("detail_count", log=True)
     add("detail_age", masked=True, log=True)
     add("cart_add", "bool", masked=True)
@@ -54,15 +65,17 @@ def _columns() -> list[tuple[str, str, str | None, str]]:
     for name in ("session_event_count", "session_distinct_items", "session_add_count"):
         add(name, log=True)
     add("session_duration", masked=True, log=True)
-    add("session_has_search", "bool")
-    add("category_similarity", masked=True)
-    add("category_match", "bool", masked=True)
-    add("price_bucket", masked=True)
-    for name in ("equal", "sign", "absolute"):
-        add("last_price_" + name, masked=True)
+    if with_metadata:
+        add("session_has_search", "bool")
+        add("category_similarity", masked=True)
+        add("category_match", "bool", masked=True)
+        add("price_bucket", masked=True)
+        for name in ("equal", "sign", "absolute"):
+            add("last_price_" + name, masked=True)
     add("historical_purchase_count", log=True)
     add("cart_unknown", "bool")
-    add("category", "category")
+    if with_metadata:
+        add("category", "category")
     return result
 
 
@@ -73,13 +86,16 @@ class FeatureEngine:
         schema: dict[str, Any],
         config: RetrievalConfig = RetrievalConfig(),
     ) -> None:
+        validate_retrieval_profile(index.config_id, config)
         self.index, self.config = index, config
-        self._columns = _columns()
+        self._columns = _columns(index.config_id)
+        self._with_metadata = index.config_id == BASE_CONFIG_ID
+        self._sources = SOURCES if self._with_metadata else NO_METADATA_SOURCES
         self._semantics = schema.get("event_semantics")
         columns = schema.get("columns")
         if (
             schema.get("schema_version") != "1"
-            or schema.get("config_id") != "gcs_rk_v2_7"
+            or schema.get("config_id") != index.config_id
             or self._semantics not in {"set_v1", "multiset_v1"}
             or not isinstance(columns, list)
             or len(columns) != len(self._columns)
@@ -105,7 +121,9 @@ class FeatureEngine:
         self.numeric_columns = tuple(
             name for name, dtype, _, _ in self._columns if dtype != "category"
         )
-        self.categorical_columns = ("category",)
+        self.categorical_columns = tuple(
+            name for name, dtype, _, _ in self._columns if dtype == "category"
+        )
 
     def build(
         self,
@@ -132,7 +150,9 @@ class FeatureEngine:
             for source in candidates.sources
         }
         last = sorted(prefix.full_last_detail, key=lambda item: id_bytes(item.sku))
-        last_rows = [(item, self.index.row(item.sku)) for item in last]
+        last_rows = (
+            [(item, self.index.row(item.sku)) for item in last] if self._with_metadata else []
+        )
         event_count = add_count = 0
         for (kind, _), count in counts.items():
             event_count = counter_add(event_count, count)
@@ -143,8 +163,7 @@ class FeatureEngine:
             if check_deadline is not None:
                 check_deadline()
             position = self.index.positions[sku]
-            candidate = self.index.row(sku)
-            assert candidate is not None
+            candidate = self.index.row(sku) if self._with_metadata else None
             values: dict[str, tuple[float | int, bool]] = {}
 
             def put(name: str, value: float | int, mask: bool = True) -> None:
@@ -152,7 +171,7 @@ class FeatureEngine:
                     raise NumericError("Неконечный признак")
                 values[name] = (value if mask else 0.0, bool(mask))
 
-            for source in SOURCES:
+            for source in self._sources:
                 member = sku in ranks[source]
                 put("origin_" + source, float(member))
                 put(
@@ -175,7 +194,8 @@ class FeatureEngine:
                 )
                 put("last_" + relation, edge[0], bool(options))
                 put("support_" + relation, edge[1], bool(options))
-            for modality in ("description", "image"):
+            for modality in ("description", "image") if self._with_metadata else ():
+                assert candidate is not None
                 similarities, available, multiplicities = [], [], []
                 item_mask = getattr(candidate, modality + "_mask")
                 for item, anchor in last_rows:
@@ -192,7 +212,8 @@ class FeatureEngine:
                 put("last_" + modality, mean.value, mean.mask)
                 put("history_" + modality + "_available", float(scores.history_available[modality]))
                 put("item_" + modality + "_available", float(item_mask))
-            put("search_age", scores.search_age_ms / 1000, scores.reasons["search"] is None)
+            if self._with_metadata:
+                put("search_age", scores.search_age_ms / 1000, scores.reasons["search"] is None)
             put("detail_count", counts.get(("detail", sku), 0))
             put(
                 "detail_age",
@@ -224,63 +245,66 @@ class FeatureEngine:
                 checked_subtract(context.t_q, first_time) / 1000 if first_time is not None else 0.0,
                 first_time is not None,
             )
-            put("session_has_search", float(prefix.search is not None))
-            category_values = []
-            if candidate.category:
-                candidate_path = candidate.category.split("/")
-                for _, anchor in last_rows:
-                    if anchor is not None and anchor.category:
-                        anchor_path = anchor.category.split("/")
-                        common = 0
-                        for left, right in zip(candidate_path, anchor_path):
-                            if left != right:
-                                break
-                            common += 1
-                        category_values.append(
-                            (
-                                common / max(1, len(candidate_path), len(anchor_path)),
-                                float(candidate_path == anchor_path),
+            if self._with_metadata:
+                assert candidate is not None
+                put("session_has_search", float(prefix.search is not None))
+                category_values = []
+                if candidate.category:
+                    candidate_path = candidate.category.split("/")
+                    for _, anchor in last_rows:
+                        if anchor is not None and anchor.category:
+                            anchor_path = anchor.category.split("/")
+                            common = 0
+                            for left, right in zip(candidate_path, anchor_path):
+                                if left != right:
+                                    break
+                                common += 1
+                            category_values.append(
+                                (
+                                    common / max(1, len(candidate_path), len(anchor_path)),
+                                    float(candidate_path == anchor_path),
+                                )
                             )
+                put(
+                    "category_similarity",
+                    max((value[0] for value in category_values), default=0.0),
+                    bool(category_values),
+                )
+                put(
+                    "category_match",
+                    max((value[1] for value in category_values), default=0.0),
+                    bool(category_values),
+                )
+                put("price_bucket", candidate.price_bucket or 0, candidate.price_bucket is not None)
+                deltas, price_masks, multiplicities = [], [], []
+                for item, anchor in last_rows:
+                    if (
+                        candidate.price_bucket is not None
+                        and anchor is not None
+                        and anchor.price_bucket is not None
+                    ):
+                        delta, valid = (
+                            checked_subtract(candidate.price_bucket, anchor.price_bucket),
+                            True,
                         )
-            put(
-                "category_similarity",
-                max((value[0] for value in category_values), default=0.0),
-                bool(category_values),
-            )
-            put(
-                "category_match",
-                max((value[1] for value in category_values), default=0.0),
-                bool(category_values),
-            )
-            put("price_bucket", candidate.price_bucket or 0, candidate.price_bucket is not None)
-            deltas, price_masks, multiplicities = [], [], []
-            for item, anchor in last_rows:
-                if (
-                    candidate.price_bucket is not None
-                    and anchor is not None
-                    and anchor.price_bucket is not None
+                    else:
+                        delta, valid = 0, False
+                    deltas.append(delta)
+                    price_masks.append(valid)
+                    multiplicities.append(item.count)
+                for name, terms in (
+                    ("equal", [float(delta == 0) for delta in deltas]),
+                    ("sign", [float((delta > 0) - (delta < 0)) for delta in deltas]),
+                    ("absolute", [abs(delta) for delta in deltas]),
                 ):
-                    delta, valid = (
-                        checked_subtract(candidate.price_bucket, anchor.price_bucket),
-                        True,
-                    )
-                else:
-                    delta, valid = 0, False
-                deltas.append(delta)
-                price_masks.append(valid)
-                multiplicities.append(item.count)
-            for name, terms in (
-                ("equal", [float(delta == 0) for delta in deltas]),
-                ("sign", [float((delta > 0) - (delta < 0)) for delta in deltas]),
-                ("absolute", [abs(delta) for delta in deltas]),
-            ):
-                mean = last_group_mean(terms, price_masks, multiplicities, semantics=semantics)
-                put("last_price_" + name, mean.value, mean.mask)
+                    mean = last_group_mean(terms, price_masks, multiplicities, semantics=semantics)
+                    put("last_price_" + name, mean.value, mean.mask)
             put(
                 "historical_purchase_count",
                 int(self.index.package.statistics.purchase_counts[position]),
             )
-            put("category", int(self.index.package.content.category_codes[position]))
+            if self._with_metadata:
+                put("category", int(self.index.package.content.category_codes[position]))
             numeric_row, categorical_row, mask_row = [], [], []
             for name, dtype, linked_mask, transformation in self._columns:
                 if name.endswith("_mask"):

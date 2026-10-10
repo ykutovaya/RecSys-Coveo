@@ -221,7 +221,7 @@ def test_preparation_admission_checks_ready_model_without_requiring_c_tables(
         "feature_schema": str(schema_path),
         "recipe": str(recipe_path),
         "retrieval": dict(kwargs["retrieval"]),
-        "evaluation_plan": {},
+        "evaluation_plan": {"period": "C_smoke"},
     }
     if damage == "defaults":
         settings["retrieval"] = {}

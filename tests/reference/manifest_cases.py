@@ -225,7 +225,7 @@ def make_manifest_case(
     plans: dict[str, str] = {}
 
     def fixed_inputs() -> dict[str, Any]:
-        return {
+        inputs = {
             key: deepcopy(manifest[key])
             for key in (
                 "evaluation_protocol",
@@ -243,6 +243,9 @@ def make_manifest_case(
                 "module_configurations",
             )
         }
+        # Число полученных сессий D относится к результатам, не к плану отбора.
+        del inputs["dataset"]["session_sampling"]["session_count_by_period"]["period_D"]
+        return inputs
 
     def fixture_plan_inputs(name: str) -> dict[str, Any]:
         inputs = fixed_inputs()

@@ -1,4 +1,4 @@
-"""Порционный локальный C_smoke на неизменной готовой модели."""
+"""Общий порционный путь C_smoke и D на готовых моделях."""
 
 import json
 import sys
@@ -18,10 +18,19 @@ from coveo_recsys.artifacts import (
 )
 from coveo_recsys.config import validate_feature_schema
 from coveo_recsys.contracts import InputValidationError, id_bytes, require_int64
-from coveo_recsys.contracts.evaluation import POLICIES, EvaluationRecord, ReplayRecord
+from coveo_recsys.contracts.evaluation import (
+    FINAL_POLICIES,
+    POLICIES,
+    EvaluationRecord,
+    ReplayRecord,
+)
 from coveo_recsys.contracts.preparation import PreparationPlan, PreparedRequest
 from coveo_recsys.contracts.records import CanonicalBlock, FeatureBatch
-from coveo_recsys.contracts.retrieval import RetrievalConfig
+from coveo_recsys.contracts.retrieval import (
+    NO_METADATA_CONFIG_ID,
+    RetrievalConfig,
+    validate_retrieval_profile,
+)
 from coveo_recsys.contracts.serialization import from_json
 from coveo_recsys.data.access import DatasetAccess
 from coveo_recsys.data.metadata import open_metadata_source
@@ -32,7 +41,8 @@ from coveo_recsys.evaluation.replay import recommend
 from coveo_recsys.evaluation.sensitivity import compare_multiplicities
 from coveo_recsys.features import FeatureEngine
 from coveo_recsys.historical.load import PACKAGE_PATH, load_historical
-from coveo_recsys.ranking.load import load_ranker
+from coveo_recsys.ranking.load import RankerModel, load_ranker
+from coveo_recsys.ranking.matrix import validate_no_metadata_schema
 from coveo_recsys.ranking.train import validate_recipe
 from coveo_recsys.retrieval.scores import RetrievalIndex, bind_context
 from coveo_recsys.verification.provenance import assert_source_binding, source_sha256
@@ -45,6 +55,78 @@ SESSIONS = "replay/sessions.parquet"
 TABLES = {ANSWERS: ReplayRecord, SESSIONS: EvaluationRecord}
 
 
+def load_sensitivity_model(
+    root: Path,
+    settings: dict[str, Any],
+    *,
+    training_hash: str,
+    historical_hash: str,
+    catalog_hash: str,
+    scope: str,
+) -> tuple[dict[str, Any], RetrievalConfig, RankerModel]:
+    """Проверить собственные B, схему, рецепт и модель варианта без метаданных."""
+    if not isinstance(settings, dict) or set(settings) != {
+        "model",
+        "training_features",
+        "feature_schema",
+        "recipe",
+        "retrieval",
+    }:
+        raise InputValidationError("Неполные входы чувствительности без метаданных")
+    schema_bytes = (root / settings["feature_schema"]).read_bytes()
+    schema = strict_json_loads(schema_bytes)
+    validate_no_metadata_schema(
+        tuple(column["name"] for column in schema["columns"]),
+        sha256_bytes(canonical_json_bytes(schema)),
+    )
+    if validate_feature_schema(schema) or schema["event_semantics"] != "set_v1":
+        raise InputValidationError("Неверная схема без метаданных")
+    recipe_bytes = (root / settings["recipe"]).read_bytes()
+    recipe = strict_json_loads(recipe_bytes)
+    validate_recipe(recipe, config_id=NO_METADATA_CONFIG_ID)
+    configuration = dict(settings["retrieval"])
+    if "quotas" in configuration:
+        configuration["quotas"] = tuple(configuration["quotas"])
+    config = RetrievalConfig(**configuration)
+    validate_retrieval_profile(NO_METADATA_CONFIG_ID, config)
+    feature_bytes = (
+        root / settings["training_features"]["path"] / "reports/features.json"
+    ).read_bytes()
+    model_bytes = (root / settings["model"]["path"] / "reports/ranker.json").read_bytes()
+    if (
+        sha256_bytes(feature_bytes) != settings["training_features"]["report_sha256"]
+        or sha256_bytes(model_bytes) != settings["model"]["report_sha256"]
+    ):
+        raise InputValidationError("Изменены отчёты варианта без метаданных")
+    features, summary = strict_json_loads(feature_bytes), strict_json_loads(model_bytes)
+    expected = {
+        "period": "B",
+        "scope": scope,
+        "preparation_sha256": training_hash,
+        "historical_sha256": historical_hash,
+        "catalog_sha256": catalog_hash,
+        "feature_schema_file_sha256": sha256_bytes(schema_bytes),
+    }
+    if (
+        features.get("status") != "completed"
+        or features.get("feature_schema") != schema
+        or any(
+            features["identity"].get(k) != v or summary["identity"].get(k) != v
+            for k, v in expected.items()
+        )
+        or canonical_json_bytes(features["identity"].get("configuration"))
+        != canonical_json_bytes(asdict(config))
+        or summary["identity"].get("features_sha256") != sha256_bytes(feature_bytes)
+        or summary["identity"].get("recipe_sha256") != sha256_bytes(recipe_bytes)
+        or summary.get("recipe") != recipe
+    ):
+        raise InputValidationError("Несовместимые собственные входы варианта без метаданных")
+    model = load_ranker(root / settings["model"]["path"], expected_identity=summary["identity"])
+    if model.summary != summary:
+        raise InputValidationError("Модель без метаданных изменилась при загрузке")
+    return schema, config, model
+
+
 def read_report(run: Path) -> dict[str, Any]:
     """Проверить готовые таблицы и воспроизвести Markdown без доступа к сырью."""
     from coveo_recsys.evaluation.reporting import render_report
@@ -53,23 +135,25 @@ def read_report(run: Path) -> dict[str, Any]:
         raise InputValidationError("Отсутствует завершённый запуск воспроизведения")
     store = LocalArtifactStore(run)
     summary = strict_json_loads(store._path(REPORT).read_bytes())
+    period = summary.get("identity", {}).get("period") if isinstance(summary, dict) else None
+    policies = FINAL_POLICIES if period == "D" else POLICIES
     if (
         not isinstance(summary, dict)
         or summary.get("status") != "completed"
         or summary.get("format_version") != "replay_v1"
         or summary.get("identity", {}).get("format_version") != "replay_v1"
         or summary.get("identity", {}).get("mode") != "ideal_deterministic"
-        or summary.get("identity", {}).get("period") != "C_smoke"
-        or summary.get("identity", {}).get("policies") != list(POLICIES)
+        or period not in {"C_smoke", "D"}
+        or summary.get("identity", {}).get("policies") != list(policies)
         or type(summary.get("requests")) is not int
         or summary["requests"] < 0
         or set(summary.get("tables", {})) != set(TABLES)
     ):
         raise InputValidationError("Нет совместимого завершённого отчёта")
     for relative, kind in TABLES.items():
-        actual = table_info(store._path(relative), kind, period="C_smoke")
+        actual = table_info(store._path(relative), kind, period=period)
         if actual != summary["tables"][relative] or actual["rows"] != summary["requests"] * len(
-            POLICIES
+            policies
         ):
             raise InputValidationError("Повреждена таблица завершённого воспроизведения")
     markdown = render_report(summary).encode("utf-8")
@@ -90,9 +174,9 @@ def run_replay(
     period: str = "C_smoke",
     before_publish: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
-    if period != "C_smoke":
-        raise InputValidationError("Для replay разрешён только период C_smoke")
-    from coveo_recsys.cli.admission import require_replay_admission
+    if period not in {"C_smoke", "D"}:
+        raise InputValidationError("Разрешены только replay C_smoke и evaluate D")
+    from coveo_recsys.cli.admission import require_final_admission, require_replay_admission
     from coveo_recsys.cli.features import LIMITS
     from coveo_recsys.cli.preparation import _peak_memory
     from coveo_recsys.evaluation.reporting import (
@@ -104,6 +188,11 @@ def run_replay(
     started = time.monotonic()
     settings_bytes = settings_path.read_bytes()
     settings = strict_json_loads(settings_bytes)
+    final_gate = (
+        (lambda: require_final_admission(project_root, settings)) if period == "D" else None
+    )
+    final_digest = final_gate() if final_gate is not None else None
+    policies = FINAL_POLICIES if period == "D" else POLICIES
     required = {
         "preparation",
         "training_preparation",
@@ -117,6 +206,8 @@ def run_replay(
         "evaluation_plan",
         "limits",
     }
+    if period == "D":
+        required.add("metadata_sensitivity")
     if (
         not isinstance(settings, dict)
         or not required <= settings.keys()
@@ -156,7 +247,7 @@ def run_replay(
         for path in roots.values()
     ):
         raise InputValidationError("Результат пересекается с входным запуском")
-    if any(not root.is_dir() for root in roots.values()):
+    if any(not path.is_dir() for name, path in roots.items() if name != "preparation"):
         raise InputValidationError("Отсутствует входной запуск")
     assert_source_binding(project_root)
     code = source_sha256(project_root)
@@ -173,21 +264,18 @@ def run_replay(
     validate_recipe(recipe)
     evaluation_plan = settings["evaluation_plan"]
     validate_evaluation_plan(evaluation_plan, plan)
+    if evaluation_plan["period"] != period or (period == "D" and pilot_sessions is not None):
+        raise InputValidationError("План не соответствует полному оценочному периоду")
     configuration = dict(settings["retrieval"])
     if "quotas" in configuration:
         configuration["quotas"] = tuple(configuration["quotas"])
     config = RetrievalConfig(**configuration)
     source = roots["preparation"]
-    prepared = read_preparation_report(
-        source, settings["preparation"]["report_sha256"], verify_tables=False
-    )
     training = read_preparation_report(
         roots["training_preparation"],
         settings["training_preparation"]["report_sha256"],
         verify_tables=False,
     )
-    if prepared["inputs"]["plan"] != sha256_bytes(contents["preparation_plan"]):
-        raise InputValidationError("План не соответствует подготовленному C_smoke")
     historical_store = LocalArtifactStore(roots["historical"])
     head = historical_store.describe(PACKAGE_PATH)
     if head.sha256 != settings["historical"]["package_sha256"]:
@@ -222,6 +310,35 @@ def run_replay(
     ):
         raise InputValidationError("Признаки, схема, отбор или рецепт не соответствуют модели")
     model = load_ranker(roots["model"], expected_identity=mid)
+    sensitivity = None
+    if period == "D":
+        sensitivity = load_sensitivity_model(
+            project_root,
+            settings["metadata_sensitivity"],
+            training_hash=settings["training_preparation"]["report_sha256"],
+            historical_hash=head.sha256,
+            catalog_hash=catalog_hash,
+            scope=plan.scope,
+        )
+        for name in ("model", "training_features"):
+            path = (project_root / settings["metadata_sensitivity"][name]["path"]).resolve()
+            if destination == path or destination in path.parents or path in destination.parents:
+                raise InputValidationError("Результат пересекается с входами чувствительности")
+    package = load_historical(historical_store)
+    metadata_path = (
+        project_root / settings["metadata_path"] if "metadata_path" in settings else None
+    )
+    if (
+        metadata_path is not None
+        and sha256_file(metadata_path) != package.input_hashes["metadata_sha256"]
+    ):
+        raise InputValidationError("Исходная поставка метаданных изменилась")
+    # Все модели, пакет и допуск проверены. Только теперь читается сводка D.
+    prepared = read_preparation_report(
+        source, settings["preparation"]["report_sha256"], verify_tables=False
+    )
+    if prepared["inputs"]["plan"] != sha256_bytes(contents["preparation_plan"]):
+        raise InputValidationError("План не соответствует подготовке оценки")
 
     def admission() -> str | None:
         return require_replay_admission(
@@ -236,19 +353,20 @@ def run_replay(
             plan=plan,
             prepared=prepared,
             evaluate=True,
+            period=period,
+            final_gate=final_gate,
         )
 
     manifest_hash = admission()  # До чтения любой таблицы C_smoke, включая её хеширование.
-    package = load_historical(historical_store)
     input_tables = [
-        "datasets/C_smoke/prefixes.parquet",
-        "canonical/C_smoke.parquet",
-        "datasets/C_smoke/targets.parquet",
+        f"datasets/{period}/prefixes.parquet",
+        f"canonical/{period}.parquet",
+        f"datasets/{period}/targets.parquet",
     ]
     if not set(input_tables) <= prepared["tables"].keys():
         raise InputValidationError("Нет полных таблиц C_smoke")
     prepared_requests = prepared["tables"][input_tables[0]]["rows"]
-    prepared_selected = set(prepared["selection"]["C_smoke"])
+    prepared_selected = set(prepared["selection"][period])
     if prepared_requests != len(prepared_selected):
         raise InputValidationError("Число первых запросов не соответствует выбранным сессиям")
     if pilot_sessions is not None and pilot_sessions > prepared_requests:
@@ -260,9 +378,6 @@ def run_replay(
     total_requests = len(selected)
     if total_requests > limits["max_requests"]:
         raise InputValidationError("Превышено число запросов; усечение запрещено")
-    metadata_path = (
-        project_root / settings["metadata_path"] if "metadata_path" in settings else None
-    )
     identity = {
         "format_version": "replay_v1",
         "run_id": run_id,
@@ -288,19 +403,46 @@ def run_replay(
         "feature_schema_file_sha256": sha256_bytes(contents["feature_schema"]),
         "recipe_sha256": sha256_bytes(contents["recipe"]),
         "configuration": asdict(config),
-        "policies": POLICIES,
+        "policies": policies,
         "pilot_sessions": pilot_sessions,
         "selected_ids": selected_ids,
         "selected_count": total_requests,
         "selected_ids_sha256": sha256_bytes(canonical_json_bytes(selected_ids)),
         "evaluation_plan": evaluation_plan,
         "manifest_sha256": manifest_hash,
+        **(
+            {
+                "metadata_sensitivity": {
+                    "settings": settings["metadata_sensitivity"],
+                    "model_identity": sensitivity[2].summary["identity"],
+                }
+            }
+            if sensitivity is not None
+            else {}
+        ),
     }
     identity_bytes = canonical_json_bytes(identity)
     identity = strict_json_loads(identity_bytes)
     store = LocalArtifactStore(destination)
 
     def inputs_unchanged(*, targets: bool) -> None:
+        if admission() != manifest_hash:
+            raise InputValidationError("Допуск изменился")
+        if sensitivity is not None:
+            checked = load_sensitivity_model(
+                project_root,
+                settings["metadata_sensitivity"],
+                training_hash=settings["training_preparation"]["report_sha256"],
+                historical_hash=head.sha256,
+                catalog_hash=catalog_hash,
+                scope=plan.scope,
+            )
+            if (
+                checked[0] != sensitivity[0]
+                or checked[1] != sensitivity[1]
+                or checked[2].summary != sensitivity[2].summary
+            ):
+                raise InputValidationError("Входы чувствительности изменились")
         if (
             source_sha256(project_root) != code
             or settings_path.read_bytes() != settings_bytes
@@ -329,8 +471,6 @@ def run_replay(
             and sha256_file(metadata_path) != package.input_hashes["metadata_sha256"]
         ):
             raise InputValidationError("Исходная поставка метаданных изменилась")
-        if admission() != manifest_hash:
-            raise InputValidationError("Допуск изменился")
 
     def outputs_unchanged(result: dict[str, Any]) -> None:
         if set(result.get("tables", {})) != set(TABLES):
@@ -368,6 +508,19 @@ def run_replay(
             store._path(relative).unlink(missing_ok=True)
 
     clear_unpublished()
+
+    def d_access_gate() -> str:
+        # Полный pre_D проверен выше; между чтениями проверяем закреплённый паспорт.
+        # Полные входы повторно проверяются перед публикацией.
+        if final_digest is None:
+            raise InputValidationError("Нет допуска pre_D")
+        entry = settings.get("admission")
+        if entry is not None and sha256_file(project_root / entry["manifest"]) != final_digest:
+            raise InputValidationError("Допуск pre_D изменился")
+        if settings_path.read_bytes() != settings_bytes:
+            raise InputValidationError("Настройки D изменились")
+        return final_digest
+
     audit: list[dict[str, Any]] = []
     access = DatasetAccess(
         source,
@@ -375,6 +528,7 @@ def run_replay(
         run_id=prepared["run_id"],
         scope=prepared["scope"],
         audit=audit.append,
+        d_admission=d_access_gate if period == "D" else None,
     )
     stage, processed, last_stage, last_progress = "prefixes", 0, "", 0.0
 
@@ -461,6 +615,13 @@ def run_replay(
         index = RetrievalIndex(package, catalog_hash, observed_records)
         engine = FeatureEngine(index, schema, config)
         multiset_engine = FeatureEngine(index, {**schema, "event_semantics": "multiset_v1"}, config)
+        sensitivity_engine = None
+        if sensitivity is not None:
+            sensitivity_engine = FeatureEngine(
+                RetrievalIndex(package, catalog_hash, config_id=NO_METADATA_CONFIG_ID),
+                sensitivity[0],
+                sensitivity[1],
+            )
         stage, processed = "recommendations", 0
         check_budget()
         with TableWriter(
@@ -493,15 +654,26 @@ def run_replay(
                 item, blocks = items[0], second[1]
                 rows = []
                 context = bind_context(item, index)
-                for policy in POLICIES:
+                for policy in policies:
+                    active_engine, active_model, active_schema = engine, model, schema
+                    active_context = context
+                    if policy == NO_METADATA_CONFIG_ID:
+                        if sensitivity is None or sensitivity_engine is None:
+                            raise InputValidationError("Нет собственной модели чувствительности")
+                        active_engine, active_model, active_schema = (
+                            sensitivity_engine,
+                            sensitivity[2],
+                            sensitivity[0],
+                        )
+                        active_context = bind_context(item, active_engine.index)
                     diagnostics: dict[str, Any] = {}
                     tick = time.monotonic()
                     answer = recommend(
-                        context,
-                        engine,
-                        model,
-                        policy=policy,
-                        package_id=model_summary["model_sha256"],
+                        active_context,
+                        active_engine,
+                        active_model,
+                        policy="GCS+Rk" if policy == NO_METADATA_CONFIG_ID else policy,
+                        package_id=active_model.summary["model_sha256"],
                         trace_ref=f"{run_id}/{ANSWERS}#{item.request_id}/{policy}",
                         diagnostics=diagnostics,
                         diagnostic_depth=evaluation_plan["diagnostic_depth"],
@@ -515,7 +687,7 @@ def run_replay(
                         "feature_rows": None,
                         "mask_reason": "not_applicable",
                     }
-                    if policy == "GCS+Rk":
+                    if policy in {"GCS+Rk", NO_METADATA_CONFIG_ID}:
                         if not isinstance(batch, FeatureBatch):
                             raise InputValidationError(
                                 "Готовая модель не сформировала базовые признаки"
@@ -525,17 +697,18 @@ def run_replay(
                             mask_reason=None,
                             feature_mask_counts={
                                 column["name"]: sum(not row[i] for row in batch.masks)
-                                for i, column in enumerate(schema["columns"])
+                                for i, column in enumerate(active_schema["columns"])
                             },
-                            sensitivity=compare_multiplicities(
-                                item,
-                                blocks,
-                                plan.task,
-                                engine,
-                                multiset_engine,
-                                base_candidates=answer.candidates,
-                                base_features=batch,
-                            ),
+                        )
+                    if policy == "GCS+Rk":
+                        saved["sensitivity"] = compare_multiplicities(
+                            item,
+                            blocks,
+                            plan.task,
+                            engine,
+                            multiset_engine,
+                            base_candidates=answer.candidates,
+                            base_features=batch,
                         )
                     rows.append(
                         ReplayRecord(sid, policy, answer, canonical_json_bytes(saved).decode())
@@ -557,12 +730,13 @@ def run_replay(
             destination,
             check_budget,
             selected_ids=selected_ids if pilot_sessions is not None else None,
+            d_admission=d_access_gate if period == "D" else None,
         )
         tables = {
             path: table_info(store._path(path), kind, period=period)
             for path, kind in TABLES.items()
         }
-        if any(info["rows"] != total_requests * len(POLICIES) for info in tables.values()):
+        if any(info["rows"] != total_requests * len(policies) for info in tables.values()):
             raise InputValidationError("Не все политики сохранены для каждой сессии")
         result = {
             **summary,

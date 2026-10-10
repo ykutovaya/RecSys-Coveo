@@ -88,11 +88,23 @@ def _parser() -> argparse.ArgumentParser:
     ranker.add_argument("--config", type=Path, required=True)
     ranker.add_argument("--run-dir", type=Path, required=True)
     ranker.add_argument("--run-id", required=True)
+    sensitivity = commands.add_parser("sensitivity", help="Проверка зависимости от метаданных")
+    sensitivity_actions = sensitivity.add_subparsers(dest="action", required=True)
+    metadata = sensitivity_actions.add_parser("metadata")
+    metadata.add_argument("--step", choices=("features", "train"), required=True)
+    metadata.add_argument("--config", type=Path, required=True)
+    metadata.add_argument("--run-dir", type=Path, required=True)
+    metadata.add_argument("--run-id", required=True)
     replay = commands.add_parser("replay", help="Локальная оценка готовой модели и контролей")
     replay.add_argument("--config", type=Path, required=True)
     replay.add_argument("--period", choices=("C_smoke",), required=True)
     replay.add_argument("--run-dir", type=Path, required=True)
     replay.add_argument("--run-id", required=True)
+    evaluate = commands.add_parser("evaluate", help="Итоговая оценка закреплённой модели на D")
+    evaluate.add_argument("--config", type=Path, required=True)
+    evaluate.add_argument("--run-dir", type=Path, required=True)
+    evaluate.add_argument("--run-id", required=True)
+    evaluate.set_defaults(period="D")
     report = commands.add_parser("report", help="Отчёт по сохранённым результатам оценки")
     report.add_argument("--run", type=Path, required=True)
     serve = commands.add_parser("serve", help="Локальный сервис рекомендаций")
@@ -102,7 +114,6 @@ def _parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, default=8000)
     for name in (
         "select",
-        "evaluate",
         "load",
         "experiment",
     ):
@@ -152,12 +163,20 @@ def main(argv: list[str] | None = None) -> int:
         "features",
         "train",
         "replay",
+        "evaluate",
         "report",
         "serve",
+        "sensitivity",
     }:
         print(f"Команда {args.command} ещё не реализована", file=sys.stderr)
         return 2
     try:
+        metadata_mode = args.command == "sensitivity"
+        profile_options: dict[str, Any] = {}
+        if metadata_mode:
+            from coveo_recsys.contracts.retrieval import NO_METADATA_CONFIG_ID
+
+            profile_options = {"required_config_id": NO_METADATA_CONFIG_ID}
         if args.command == "serve":
             from coveo_recsys.cli.serving import run_serve
 
@@ -168,7 +187,7 @@ def main(argv: list[str] | None = None) -> int:
 
             _emit(read_report(args.run))
             return 0
-        if args.command == "replay":
+        if args.command in {"replay", "evaluate"}:
             from coveo_recsys.cli.replay import run_replay
 
             try:
@@ -180,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 130
             _emit(result)
             return 0
-        if args.command == "train":
+        if args.command == "train" or (metadata_mode and args.step == "train"):
             from contextlib import redirect_stdout
 
             from coveo_recsys.cli.training import run_training
@@ -188,7 +207,9 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 # LightGBM сообщает ход обучения в stdout; JSON команды остаётся отдельным.
                 with redirect_stdout(sys.stderr):
-                    result = run_training(args.project_root, args.config, args.run_dir, args.run_id)
+                    result = run_training(
+                        args.project_root, args.config, args.run_dir, args.run_id, **profile_options
+                    )
             except KeyboardInterrupt:
                 _emit({"status": "failed", "reason": "interrupted"})
                 return 130
@@ -209,12 +230,17 @@ def main(argv: list[str] | None = None) -> int:
                 return 130
             _emit(result)
             return 0
-        if args.command == "features":
+        if args.command == "features" or (metadata_mode and args.step == "features"):
             from coveo_recsys.cli.features import run_features
 
             try:
                 result = run_features(
-                    args.project_root, args.config, args.run_dir, args.run_id, period=args.period
+                    args.project_root,
+                    args.config,
+                    args.run_dir,
+                    args.run_id,
+                    period="B" if metadata_mode else args.period,
+                    **profile_options,
                 )
             except KeyboardInterrupt:
                 _emit({"status": "failed", "reason": "interrupted"})

@@ -7,19 +7,19 @@ import lightgbm as lgb
 import numpy as np
 
 from coveo_recsys.artifacts import canonical_json_bytes
-from coveo_recsys.config.resources import resource_bytes
+from coveo_recsys.config.recipes import get_ranker_recipe
 from coveo_recsys.contracts import InputValidationError
+from coveo_recsys.contracts.retrieval import BASE_CONFIG_ID, NO_METADATA_CONFIG_ID
 
+from .matrix import validate_no_metadata_schema
 from .objective import make_objective
 from .table import TrainingTable
 
 
-def validate_recipe(recipe: dict[str, Any]) -> None:
-    from coveo_recsys.artifacts import strict_json_loads
-
+def validate_recipe(recipe: dict[str, Any], config_id: str = BASE_CONFIG_ID) -> None:
     if lgb.__version__ != "4.6.0":
         raise InputValidationError("Нужен принятый LightGBM 4.6.0")
-    expected = strict_json_loads(resource_bytes("configs/ranker_recipe.json"))
+    expected = get_ranker_recipe(config_id)
     if canonical_json_bytes(recipe) != canonical_json_bytes(expected):
         raise InputValidationError("Изменён закреплённый рецепт ранжировщика")
 
@@ -28,9 +28,14 @@ def fit_ranker(
     table: TrainingTable,
     recipe: dict[str, Any],
     *,
+    config_id: str = BASE_CONFIG_ID,
     check_budget: Callable[[], None] | None = None,
 ) -> tuple[lgb.Booster, dict[str, Any]]:
-    validate_recipe(recipe)
+    validate_recipe(recipe, config_id)
+    if table.categorical_columns != tuple(recipe["dataset"]["categorical_feature"]):
+        raise InputValidationError("Категориальные признаки не соответствуют профилю модели")
+    if config_id == NO_METADATA_CONFIG_ID:
+        validate_no_metadata_schema(table.numeric_columns, table.feature_schema_sha256)
     if not table.statistics["pair_count"]:
         raise InputValidationError("insufficient: нет обучающих пар")
     objective = make_objective(table.labels, table.group_sizes, table.skus)
@@ -93,6 +98,7 @@ def fit_ranker(
             key, _, value = line[1:-1].partition(": ")
             resolved[key] = value
     return booster, {
+        "config_id": config_id,
         "library": "lightgbm",
         "library_version": lgb.__version__,
         "recipe": recipe,

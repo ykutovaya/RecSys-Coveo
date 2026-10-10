@@ -22,6 +22,11 @@ from coveo_recsys.config import validate_feature_schema
 from coveo_recsys.contracts import InputValidationError, require_int64
 from coveo_recsys.contracts.preparation import PreparedRequest
 from coveo_recsys.contracts.records import CandidateResult, FeatureBatch
+from coveo_recsys.contracts.retrieval import (
+    BASE_CONFIG_ID,
+    RetrievalConfig,
+    validate_retrieval_profile,
+)
 from coveo_recsys.contracts.training import TargetRecord
 from coveo_recsys.data.access import DatasetAccess
 from coveo_recsys.data.prepared import iter_sessions, read_report, table_info, verify_tables
@@ -43,6 +48,7 @@ def run_training(
     run_dir: Path,
     run_id: str,
     *,
+    required_config_id: str | None = None,
     before_publish: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     from coveo_recsys.cli.admission import require_training_admission
@@ -93,7 +99,10 @@ def run_training(
     schema, recipe = strict_json_loads(schema_bytes), strict_json_loads(recipe_bytes)
     if validate_feature_schema(schema):
         raise InputValidationError("Неверная схема признаков")
-    validate_recipe(recipe)
+    config_id = schema["config_id"]
+    if required_config_id is not None and config_id != required_config_id:
+        raise InputValidationError("Команда требует схему профиля без метаданных")
+    validate_recipe(recipe, config_id)
     prepared = read_report(source, settings["preparation"]["report_sha256"], verify_tables=False)
     historical_store = LocalArtifactStore(historical_root)
     head = historical_store.describe(PACKAGE_PATH)
@@ -109,6 +118,7 @@ def run_training(
         features.get("status") != "completed"
         or fid.get("format_version") != "features_v1"
         or fid.get("period") != "B"
+        or fid.get("config_id", BASE_CONFIG_ID) != config_id
         or fid.get("scope") != prepared["scope"]
         or fid.get("preparation_sha256") != settings["preparation"]["report_sha256"]
         or fid.get("historical_sha256") != head.sha256
@@ -118,6 +128,8 @@ def run_training(
         or set(features.get("tables", {})) != set(TABLES)
     ):
         raise InputValidationError("Признаки несовместимы с входами обучения")
+    configuration = {**fid["configuration"], "quotas": tuple(fid["configuration"]["quotas"])}
+    validate_retrieval_profile(config_id, RetrievalConfig(**configuration))
 
     def admission() -> str | None:
         return require_training_admission(
@@ -143,6 +155,7 @@ def run_training(
     schema_hash = sha256_bytes(canonical_json_bytes(schema))
     objective_hash = sha256_file(Path(objective.__file__))
     identity = {
+        "config_id": config_id,
         "run_id": run_id,
         "scope": prepared["scope"],
         "period": "B",
@@ -287,6 +300,7 @@ def run_training(
     check_budget()
     result: dict[str, Any] = {
         "format_version": "ranker_v1",
+        "config_id": config_id,
         "status": "insufficient",
         "reason": "no_training_pairs",
         "identity": identity,
@@ -300,7 +314,9 @@ def run_training(
         "environment": environment_report(project_root),
     }
     if table.statistics["pair_count"]:
-        booster, training = fit_ranker(table, recipe, check_budget=check_budget)
+        booster, training = fit_ranker(
+            table, recipe, config_id=config_id, check_budget=check_budget
+        )
         model_bytes = booster.model_to_string(num_iteration=booster.num_trees()).encode("utf-8")
         check_budget(len(model_bytes))
         if store._path(MODEL).exists():

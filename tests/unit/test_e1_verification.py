@@ -31,6 +31,7 @@ def test_implemented_checks_keep_partial_coverage_and_existing_test_paths():
         "B10.features",
         "B10.ranker",
         "B10.evaluation",
+        "B10.metadata",
         "B11",
         "B12",
         "B13.preparation",
@@ -56,6 +57,7 @@ def test_implemented_checks_keep_partial_coverage_and_existing_test_paths():
         "B10.features",
         "B10.ranker",
         "B10.evaluation",
+        "B10.metadata",
     ):
         assert checks[name]["complete_test"] is False
         assert checks[name]["remaining"]

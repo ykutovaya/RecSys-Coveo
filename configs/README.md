@@ -8,9 +8,11 @@
 | [coveo_preparation.json](/configs/coveo_preparation.json) | `observed_purchases_v1`: один запрос, до 50 000 целых сессий после календарного допуска A_G, seed 17 и бюджеты. Полнота телеметрии неизвестна. |
 | [coveo_historical.json](/configs/coveo_historical.json) | Закреплённый готовый A_G, метаданные, параметры графа и бюджеты Э2. Новая сборка не меняет входную подготовку и не требует `preflight`. |
 | [synthetic_csv.json](/configs/synthetic_csv.json) | Соответствие столбцов искусственных CSV внутренним полям. |
-| [synthetic_preparation.json](/configs/synthetic_preparation.json) | План искусственной подготовки: задача, семь периодов, объёмы выборок, seed и пределы ресурсов. Для Coveo не используется. |
+| [synthetic_preparation.json](/configs/synthetic_preparation.json) | План искусственной подготовки: задача, семь периодов, объёмы выборок, seed и пределы ресурсов. D выключен: его подготовка требует отдельного допуска. Для Coveo не используется. |
 | [feature_schema.json](/configs/feature_schema.json) | Состав 93 столбцов Э3: порядок, типы, формулы, маски, преобразования и происхождение. `FeatureEngine` проверяет схему, `FeatureBatch` сохраняет её хеш. Это конкретный набор признаков, а не JSON Schema его формата. |
 | [ranker_recipe.json](/configs/ranker_recipe.json) | Закреплённые параметры LightGBM первого запуска. Валидатор сверяет паспорт, `train ranker` использует рецепт без подбора. |
+| [feature_schema_no_metadata.json](/configs/feature_schema_no_metadata.json) | Отдельная схема Э7: 54 числовых и булевых столбца, без категории и признаков метаданных. |
+| [ranker_recipe_no_metadata.json](/configs/ranker_recipe_no_metadata.json) | Тот же рецепт и бюджет, что у базы; единственное отличие — `dataset.categorical_feature=[]`. |
 | [coveo_service.json](/configs/coveo_service.json) | Локальная публикация готового пакета и модели, проверяемые хеши, календарь, бюджеты загрузки и адаптер состояния. `timeout_ms=1000` ограничивает весь запрос от первого HTTP-байта; `reserve_ms=100` оставляет время на резерв, запись и возврат. Оба поля — целые, `0 < reserve_ms < timeout_ms` в пределах int64. Секрет владельца берётся из `COVEO_LOCAL_TOKEN`, не из JSON. |
 | [test_registry.json](/configs/test_registry.json) | Соответствие требований тестам и независимым эталонам. Не запускает тесты и не хранит их результаты. |
 
@@ -105,6 +107,24 @@ JSON конкретного запуска хранится в `runs/`. В нё�
 подтверждает его. Параметры точности оценки обязательны к `pre_D`, не к первой
 модели; до обоснования по пилоту они остаются незаполненными.
 
+## Вариант без метаданных Э7
+
+Настройки имеют прежний формат Э3/Э4. В обоих файлах задаётся
+`feature_schema: "configs/feature_schema_no_metadata.json"`.
+Для признаков — `retrieval.quotas: [50, 50, 50, 0, 0, 0, 20, 10]`,
+`max_candidates: 300`; `metadata_path` запрещён, в том числе для неизвестного SKU истории.
+Для обучения — `recipe: "configs/ranker_recipe_no_metadata.json"` и ссылка с хешем
+на собственный результат признаков. Остальные параметры рецепта не меняются.
+
+Команды `sensitivity metadata --step features` и `sensitivity metadata --step train`
+принимают `--config`, `--run-dir`, `--run-id` и используют существующие функции.
+Период признаков — только B. Нужны отдельные каталоги и актуальный допуск с
+`base_model.config_id=graph_recent_popularity_no_provided_metadata`, той же схемой,
+квотами и рецептом; паспорт основной модели не подходит. Предельные ресурсы
+согласуются до фактического запуска. Принятые настройки Э7-04 —
+`runs/coveo-b50000-no-metadata-v1/features-config.json` и `training-config.json`
+в том же каталоге; команды и результаты — в [README](/README.md#вариант-без-метаданных-э7).
+
 ## Настройки оценки Э5
 
 JSON запуска хранится в `runs/`. `replay` принимает только C_smoke:
@@ -123,3 +143,38 @@ JSON запуска хранится в `runs/`. `replay` принимает т�
 Для каждой из пяти оценок (`GCS+Rk`, `P`, `R`, `GCS+Rk-P`, `GCS+Rk-R`) отдельно задаются `dependence: {supported, assumptions}` и `half_width_fraction`. Необоснованные значения остаются `null`; это не блокирует пилот, но не позволяет объявить интервал пригодным. Разрезы закреплены кодом; пороги популярности вычисляются только из A_G. Требования к интервалам — [ТЗ §9.4](/documents/implementation_spec.md#94-интервалы-и-достаточность).
 
 Перед подготовкой используется `data prepare --evaluation-config <путь>`: проверяются готовая модель, согласованный план, профиль исходных CSV и `post_training`, но ещё не существующий C_smoke не требуется. После подготовки её путь и хеш отчёта добавляются в настройки `replay`; перед чтением таблиц проверяется B12 через `operation=evaluate`. Изменение кода оценки не меняет хеши производителей B, A_G или модели.
+
+## Итоговая оценка D
+
+`evaluate` использует те же поля и пределы, что `replay`, со следующими отличиями:
+
+- В плане подготовки активен только D; `evaluation_plan.period` равен `D`.
+  `pilot_sessions` запрещён: оценивается вся закреплённая выборка, без усечения.
+- `metadata_sensitivity` содержит собственные `model`, `training_features`
+  (пути и `report_sha256`), `feature_schema`, `recipe` и `retrieval` варианта без
+  метаданных. Используются готовые B и модели; признаки D строятся по его префиксам.
+- К трём `policies` добавляется `graph_recent_popularity_no_provided_metadata`.
+  В `intervals.dependence` и `half_width_fraction` нужны ещё две оценки: этот
+  вариант и `GCS+Rk-graph_recent_popularity_no_provided_metadata`.
+- `admission` требует паспорт `pre_D` и дополнительное поле
+  `plan_references: {"before_D": "<SHA-256>"}`. До подготовки также проверяется
+  `operation=evaluate`. Индекс моделей содержит оба варианта.
+
+Текущий режим — одна GCS+Rk без подбора: `primary_estimate_type=single_policy`,
+`primary_policy_config_id=gcs_rk_v2_7`, единственная зарегистрированная политика —
+база. `primary_comparison`, ссылка `before_C_select`, `evidence.selection_plan`
+и хеши результатов выбора остаются `null`. Вариант без метаданных не входит в подбор.
+
+Закреплённое свидетельство `evaluation_plan` содержит `execution`, полученный
+функцией [final_execution_binding](/src/coveo_recsys/cli/admission.py): настройки
+без `admission` и результата `preparation`, хеши плана подготовки, схем и рецептов.
+Это позволяет закрепить план до появления D и затем добавить путь и хеш его сводки.
+Фактический `session_count_by_period.period_D` заполняется по готовой подготовке:
+это результат, а не часть закреплённой конфигурации. Лимит и правило отбора остаются
+в `before_D`; итоговая проверка сверяет число оценённых сессий с фактически выбранными.
+Сетка, блоки и основная полуширина совпадают с паспортом; основной `dependence`
+совпадает с `inference.dependence_assumptions.single_policy_hit`
+(объект `{supported, assumptions}`). Неизвестные параметры точности не заполняются автоматически.
+
+Проверки допуска не создают разрешение на запуск. Реальный план D и ресурсы
+согласуются отдельно; пример запуска — в [README](/README.md#итоговая-оценка-э7-05).

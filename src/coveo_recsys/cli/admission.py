@@ -1,5 +1,6 @@
 """Привязка будущего обучения B к фактическому preflight до чтения таблиц."""
 
+from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,6 +11,7 @@ from coveo_recsys.artifacts import (
     LocalArtifactStore,
     canonical_json_bytes,
     sha256_bytes,
+    sha256_file,
     strict_json_loads,
 )
 from coveo_recsys.config import validate_manifest
@@ -53,7 +55,7 @@ def require_training_admission(
     Свидетельство data закрепляет точные план и отчёт; контрольные суммы исходных
     CSV повторно проверяет существующий валидатор, без разбора будущих событий.
     """
-    if stage not in {"preflight", "post_training"}:
+    if stage not in {"preflight", "post_training", "pre_D"}:
         raise InputValidationError("Неверная стадия допуска B/C_smoke")
     if prepared.get("scope") == historical.scope == "synthetic":
         return None
@@ -62,7 +64,10 @@ def require_training_admission(
             "Реальный B требует отдельного допуска Э1-10 без смешения областей"
         )
     try:
-        if set(admission) != {"manifest", "manifest_sha256", "run_dir", "input_paths"}:
+        expected = {"manifest", "manifest_sha256", "run_dir", "input_paths"}
+        if stage == "pre_D":
+            expected.add("plan_references")
+        if set(admission) != expected:
             raise InputValidationError("Нужны паспорт, его SHA-256, каталог и три исходных пути")
         manifest_path = project_root / admission["manifest"]
         manifest_bytes = manifest_path.read_bytes()
@@ -200,7 +205,14 @@ def require_training_admission(
             "vector_epsilon": base["vector_epsilon"],
         }.items():
             _same(historical.configuration[name], expected, f"historical.{name}")
-        result = validate_manifest(manifest, stage, store, input_paths=paths, operation=operation)
+        result = validate_manifest(
+            manifest,
+            stage,
+            store,
+            input_paths=paths,
+            operation=operation,
+            **({"plan_references": admission["plan_references"]} if stage == "pre_D" else {}),
+        )
         if not result.gate_passed:
             detail = "; ".join(f"{issue.path}: {issue.message}" for issue in result.issues)
             raise InputValidationError(f"Допуск {stage} не пройден: {detail}")
@@ -222,14 +234,22 @@ def require_replay_admission(
     plan: PreparationPlan,
     prepared: dict[str, Any] | None = None,
     evaluate: bool = False,
+    period: str = "C_smoke",
+    final_gate: Callable[[], str] | None = None,
 ) -> str | None:
     """Допуск C_smoke до подготовки; готовый набор проверяется перед выдачей.
 
     Код и preflight принадлежат потребителю. Идентичность модели сохраняет
     производителя, но связывается с принятым B, схемой и историческим пакетом.
     """
-    if [p.name for p in plan.periods if p.sample_size] != ["C_smoke"]:
+    if period not in {"C_smoke", "D"} or [p.name for p in plan.periods if p.sample_size] != [
+        period
+    ]:
         raise InputValidationError("Оценочная подготовка разрешена только для C_smoke")
+    final_digest = None
+    if period == "D":
+        if final_gate is None or not (final_digest := final_gate()):
+            raise InputValidationError("Нет допуска pre_D")
     try:
         original_plan = from_json(training_prepared["plan_json"].encode(), PreparationPlan)
         for name in ("scope", "source_namespace", "task", "coverage", "seed"):
@@ -263,14 +283,16 @@ def require_replay_admission(
             for name, digest in training_prepared["inputs"].items():
                 if name != "plan":
                     _same(prepared["inputs"][name], digest, f"C_smoke/{name}")
-            selected = prepared["selection"]["C_smoke"]
-            limit = next(p.sample_size for p in plan.periods if p.name == "C_smoke")
+            selected = prepared["selection"][period]
+            limit = next(p.sample_size for p in plan.periods if p.name == period)
             if (
                 len(selected) > limit
                 or len(selected) != len(set(selected))
-                or any(ids for name, ids in prepared["selection"].items() if name != "C_smoke")
+                or any(ids for name, ids in prepared["selection"].items() if name != period)
             ):
                 raise InputValidationError("Состав C_smoke не соответствует плану")
+        if period == "D":
+            return final_digest
         if plan.scope == historical.scope == "synthetic":
             return None
         digest = require_training_admission(
@@ -318,6 +340,168 @@ def require_replay_admission(
         raise InputValidationError(str(exc)) from exc
 
 
+def final_execution_binding(project_root: Path, settings: dict[str, Any]) -> dict[str, Any]:
+    """Часть before_D, известная до подготовки D; не читает её результат."""
+    execution = {
+        key: value for key, value in settings.items() if key not in {"admission", "preparation"}
+    }
+    files = {"preparation_plan": sha256_file(project_root / settings["preparation_plan"])}
+    for name, profile in (("primary", settings), ("metadata", settings["metadata_sensitivity"])):
+        for key in ("feature_schema", "recipe"):
+            files[f"{name}/{key}"] = sha256_file(project_root / profile[key])
+    return {"settings": execution, "files": files}
+
+
+def require_final_admission(project_root: Path, settings: dict[str, Any]) -> str:
+    """Действующий pre_D и точные входы двух моделей, до любого обращения к D."""
+    from coveo_recsys.config.manifest import fixed_policy_without_selection
+    from coveo_recsys.contracts.retrieval import BASE_CONFIG_ID, NO_METADATA_CONFIG_ID
+    from coveo_recsys.data.prepared import read_report
+    from coveo_recsys.evaluation.reporting import validate_evaluation_plan
+    from coveo_recsys.historical.load import PACKAGE_PATH
+
+    try:
+        if not isinstance(settings, dict):
+            raise InputValidationError("Для допуска pre_D нужен объект настроек")
+        admission = settings.get("admission")
+        if not isinstance(admission, dict) or set(admission) != {
+            "manifest",
+            "manifest_sha256",
+            "run_dir",
+            "input_paths",
+            "plan_references",
+        }:
+            raise InputValidationError("Для D нужен допуск pre_D с внешней ссылкой before_D")
+        manifest_bytes = (project_root / admission["manifest"]).read_bytes()
+        digest = sha256_bytes(manifest_bytes)
+        _same(digest, admission["manifest_sha256"], "SHA-256 pre_D")
+        manifest = strict_json_loads(manifest_bytes)
+        _same(manifest["stage"], "pre_D", "стадия D")
+        store_path = project_root / admission["run_dir"]
+        if not store_path.is_dir():
+            raise InputValidationError("Нет свидетельств pre_D")
+        store = LocalArtifactStore(store_path)
+        result = validate_manifest(
+            manifest,
+            "pre_D",
+            store,
+            plan_references=admission["plan_references"],
+            input_paths={
+                name: project_root / value for name, value in admission["input_paths"].items()
+            },
+            operation="evaluate",
+        )
+        if not result.gate_passed:
+            raise InputValidationError(
+                "Допуск pre_D не пройден: "
+                + "; ".join(f"{issue.path}: {issue.message}" for issue in result.issues)
+            )
+        if not fixed_policy_without_selection(manifest):
+            raise InputValidationError("evaluate поддерживает одну закреплённую базу без подбора")
+        if "pilot_sessions" in settings:
+            raise InputValidationError("D оценивается целиком по закреплённому плану, не как пилот")
+        plan = from_json(
+            (project_root / settings["preparation_plan"]).read_bytes(), PreparationPlan
+        )
+        evaluation = settings["evaluation_plan"]
+        validate_evaluation_plan(evaluation, plan)
+        _same(evaluation["period"], "D", "период итоговой оценки")
+        _same([p.name for p in plan.periods if p.sample_size], ["D"], "отбор только D")
+        if plan.scope == "actual" and manifest["scope"] not in {"actual", "offline_first_run"}:
+            raise InputValidationError("Искусственный допуск не открывает реальный D")
+        frozen = strict_json_loads(store.read_by_sha256(admission["plan_references"]["before_D"]))
+        _same(
+            frozen.get("execution"),
+            final_execution_binding(project_root, settings),
+            "параметры evaluate в before_D",
+        )
+        intervals, inference = evaluation["intervals"], manifest["inference"]
+        for actual, expected in (
+            (intervals["grid_step_ms"], inference["calendar_cell_seconds"] * 1000),
+            (intervals["block_cells"], inference["block_cells"]),
+            (intervals["sensitivity_block_cells"], inference["sensitivity_block_cells"]),
+            (
+                intervals["half_width_fraction"]["GCS+Rk"],
+                inference["single_policy_half_width_fraction"],
+            ),
+        ):
+            _same(actual, expected, "основная оценка в before_D")
+        _same(
+            intervals["dependence"]["GCS+Rk"],
+            inference["dependence_assumptions"]["single_policy_hit"],
+            "предпосылки основной оценки",
+        )
+        training = read_report(
+            project_root / settings["training_preparation"]["path"],
+            settings["training_preparation"]["report_sha256"],
+            verify_tables=False,
+        )
+        original = from_json(training["plan_json"].encode(), PreparationPlan)
+        for key in ("scope", "source_namespace", "task", "coverage", "seed"):
+            _same(getattr(plan, key), getattr(original, key), f"план D/{key}")
+        _same(
+            [(p.name, p.start_ms, p.end_ms) for p in plan.periods],
+            [(p.name, p.start_ms, p.end_ms) for p in original.periods],
+            "границы плана D",
+        )
+        _same(plan.diagnostic_sessions, 0, "нормативная подготовка D")
+        historical = LocalArtifactStore(project_root / settings["historical"]["path"]).describe(
+            PACKAGE_PATH
+        )
+        _same(historical.sha256, settings["historical"]["package_sha256"], "пакет D")
+        # Проверки B и исходных файлов остаются прежними; D здесь не читается.
+        require_training_admission(
+            project_root,
+            admission,
+            prepared=training,
+            historical=historical,
+            feature_schema_bytes=(project_root / settings["feature_schema"]).read_bytes(),
+            recipe=strict_json_loads((project_root / settings["recipe"]).read_bytes()),
+            retrieval=asdict(
+                RetrievalConfig(
+                    **{
+                        **settings["retrieval"],
+                        **(
+                            {"quotas": tuple(settings["retrieval"]["quotas"])}
+                            if "quotas" in settings["retrieval"]
+                            else {}
+                        ),
+                    }
+                )
+            ),
+            stage="pre_D",
+            operation="evaluate",
+        )
+        models = strict_json_loads(
+            store.read_by_sha256(manifest["artifacts"]["trained_models_sha256"])
+        )
+        for config_id, profile in (
+            (BASE_CONFIG_ID, settings),
+            (NO_METADATA_CONFIG_ID, settings["metadata_sensitivity"]),
+        ):
+            content = (project_root / profile["model"]["path"] / "reports/ranker.json").read_bytes()
+            _same(sha256_bytes(content), profile["model"]["report_sha256"], "отчёт готовой модели")
+            model = strict_json_loads(content)
+            entries = [row for row in models["configurations"] if row["config_id"] == config_id]
+            if len(entries) != 1:
+                raise InputValidationError("В pre_D нужны обе закреплённые модели")
+            for key, value in {
+                "model_sha256": model["model_sha256"],
+                "feature_schema_sha256": sha256_file(project_root / profile["feature_schema"]),
+                "actual_tree_count": model["actual_tree_count"],
+                "training_status": "passed",
+            }.items():
+                _same(entries[0][key], value, f"модель {config_id}/{key}")
+            _same(
+                sha256_file(project_root / profile["model"]["path"] / "models/ranker.txt"),
+                model["model_sha256"],
+                "байты модели",
+            )
+        return digest
+    except (OSError, ValueError, TypeError, KeyError, StopIteration) as exc:
+        raise InputValidationError(str(exc)) from exc
+
+
 def require_evaluation_preparation(
     project_root: Path, settings_path: Path, plan: PreparationPlan, *, profile_sha256: str
 ) -> str | None:
@@ -325,12 +509,18 @@ def require_evaluation_preparation(
     from coveo_recsys.config import validate_feature_schema
     from coveo_recsys.data.prepared import read_report
     from coveo_recsys.evaluation.reporting import validate_evaluation_plan
-    from coveo_recsys.historical.load import PACKAGE_PATH
+    from coveo_recsys.historical.load import PACKAGE_PATH, load_historical
     from coveo_recsys.ranking.load import load_ranker
     from coveo_recsys.ranking.train import validate_recipe
 
     try:
         settings = strict_json_loads(settings_path.read_bytes())
+        period = settings["evaluation_plan"]["period"]
+        final_gate = (
+            (lambda: require_final_admission(project_root, settings)) if period == "D" else None
+        )
+        if final_gate is not None:
+            final_gate()
         validate_evaluation_plan(settings["evaluation_plan"], plan)
         retrieval = dict(settings["retrieval"])
         if "quotas" in retrieval:
@@ -350,10 +540,17 @@ def require_evaluation_preparation(
             project_root / training["path"], training["report_sha256"], verify_tables=False
         )
         _same(profile_sha256, prepared["inputs"]["profile"], "профиль входов C_smoke")
-        historical = LocalArtifactStore(project_root / settings["historical"]["path"]).describe(
-            PACKAGE_PATH
-        )
+        historical_store = LocalArtifactStore(project_root / settings["historical"]["path"])
+        historical = historical_store.describe(PACKAGE_PATH)
         _same(historical.sha256, settings["historical"]["package_sha256"], "исторический пакет")
+        if period == "D":
+            package = load_historical(historical_store)
+            if "metadata_path" in settings:
+                _same(
+                    sha256_file(project_root / settings["metadata_path"]),
+                    package.input_hashes["metadata_sha256"],
+                    "поставка метаданных",
+                )
         model_root = project_root / settings["model"]["path"]
         model_bytes = (model_root / "reports/ranker.json").read_bytes()
         _same(sha256_bytes(model_bytes), settings["model"]["report_sha256"], "отчёт модели")
@@ -376,6 +573,17 @@ def require_evaluation_preparation(
             "configuration": retrieval,
         }.items():
             _same(features["identity"][name], expected, f"признаки B/{name}")
+        if period == "D":
+            from coveo_recsys.cli.replay import load_sensitivity_model
+
+            load_sensitivity_model(
+                project_root,
+                settings["metadata_sensitivity"],
+                training_hash=training["report_sha256"],
+                historical_hash=historical.sha256,
+                catalog_hash=model_summary["identity"]["catalog_sha256"],
+                scope=plan.scope,
+            )
         return require_replay_admission(
             project_root,
             settings.get("admission"),
@@ -386,6 +594,8 @@ def require_evaluation_preparation(
             retrieval=retrieval,
             model_summary=model_summary,
             plan=plan,
+            period=period,
+            final_gate=final_gate,
         )
     except (OSError, ValueError, TypeError, KeyError) as exc:
         raise InputValidationError(str(exc)) from exc

@@ -27,9 +27,12 @@ POLICIES = ["GCS+Rk", "P", "R"]
 
 @pytest.fixture(scope="module")
 def replay_template(prepared_source, tmp_path_factory):  # noqa: F811
+    return make_replay_template(prepared_source, tmp_path_factory.mktemp("e5-template"))
+
+
+def make_replay_template(prepared_source, root, period="C_smoke"):  # noqa: F811
     from coveo_recsys.cli.training import run_training
 
-    root = tmp_path_factory.mktemp("e5-template")
     feature_settings, training_source, historical = e3_settings.__wrapped__(prepared_source, root)
     training_settings, _, features = e4_settings.__wrapped__(
         (feature_settings, training_source, historical), root
@@ -40,21 +43,20 @@ def replay_template(prepared_source, tmp_path_factory):  # noqa: F811
     plan = from_json(training_report["plan_json"].encode(), PreparationPlan)
     plan = replace(
         plan,
-        periods=tuple(
-            replace(p, sample_size=3 if p.name == "C_smoke" else 0) for p in plan.periods
-        ),
+        periods=tuple(replace(p, sample_size=3 if p.name == period else 0) for p in plan.periods),
     )
     plan_path = root / "c-plan.json"
     plan_path.write_bytes(to_json(plan))
     source = root / "evaluation"
     tables = {}
     with (
-        TableWriter(source / "datasets/C_smoke/prefixes.parquet", PreparedRequest) as prefixes,
-        TableWriter(source / "canonical/C_smoke.parquet", CanonicalBlock) as canonical,
-        TableWriter(source / "datasets/C_smoke/targets.parquet", TargetRecord) as targets,
+        TableWriter(source / f"datasets/{period}/prefixes.parquet", PreparedRequest) as prefixes,
+        TableWriter(source / f"canonical/{period}.parquet", CanonicalBlock) as canonical,
+        TableWriter(source / f"datasets/{period}/targets.parquet", TargetRecord) as targets,
     ):
         for i in range(3):
-            sid, qid, instant = f"e{i}", f"eq{i}", 600001000 + i * 2000
+            start = next(p.start_ms for p in plan.periods if p.name == period)
+            sid, qid, instant = f"e{i}", f"eq{i}", start + 1000 + i * 2000
             events = ((instant, "detail", "A"),) * (i + 1)
             if i != 1:
                 events += ((instant + 500, "purchase", "C" if i == 0 else "outside"),)
@@ -96,17 +98,17 @@ def replay_template(prepared_source, tmp_path_factory):  # noqa: F811
                 )
             targets.append(sid, (target,))
     for path, kind, role in (
-        ("datasets/C_smoke/prefixes.parquet", PreparedRequest, "prefix"),
-        ("datasets/C_smoke/targets.parquet", TargetRecord, "targets"),
-        ("canonical/C_smoke.parquet", CanonicalBlock, "canonical"),
+        (f"datasets/{period}/prefixes.parquet", PreparedRequest, "prefix"),
+        (f"datasets/{period}/targets.parquet", TargetRecord, "targets"),
+        (f"canonical/{period}.parquet", CanonicalBlock, "canonical"),
     ):
-        tables[path] = table_info(source / path, kind, period="C_smoke", role=role)
+        tables[path] = table_info(source / path, kind, period=period, role=role)
     report = dict(training_report)
     report.update(
         run_id="e5-input",
         tables=tables,
         plan_json=to_json(plan).decode(),
-        selection={p.name: ["e0", "e1", "e2"] if p.name == "C_smoke" else [] for p in plan.periods},
+        selection={p.name: ["e0", "e1", "e2"] if p.name == period else [] for p in plan.periods},
     )
     report["inputs"] = {**report["inputs"], "plan": sha256_bytes(to_json(plan))}
     report.update(
@@ -116,9 +118,9 @@ def replay_template(prepared_source, tmp_path_factory):  # noqa: F811
         exclusions={},
         period_counts={
             p.name: {
-                "admitted": 3 if p.name == "C_smoke" else 0,
-                "eligible": 3 if p.name == "C_smoke" else 0,
-                "selected": 3 if p.name == "C_smoke" else 0,
+                "admitted": 3 if p.name == period else 0,
+                "eligible": 3 if p.name == period else 0,
+                "selected": 3 if p.name == period else 0,
             }
             for p in plan.periods
         },
@@ -127,7 +129,7 @@ def replay_template(prepared_source, tmp_path_factory):  # noqa: F811
     (source / "reports/preparation.json").write_bytes(canonical_json_bytes(report))
     estimate_names = [*POLICIES, "GCS+Rk-P", "GCS+Rk-R"]
     evaluation_plan = {
-        "period": "C_smoke",
+        "period": period,
         "policies": POLICIES,
         "k": 20,
         "diagnostic_depth": 2,

@@ -6,9 +6,23 @@ import math
 from typing import Any
 
 from coveo_recsys.artifacts import strict_json_loads
-from coveo_recsys.contracts.common import ValidationIssue
+from coveo_recsys.contracts.common import InputValidationError, ValidationIssue
+from coveo_recsys.contracts.retrieval import (
+    BASE_CONFIG_ID,
+    NO_METADATA_CONFIG_ID,
+    SUPPORTED_CONFIG_IDS,
+)
 
 from .resources import resource_bytes
+
+
+def get_ranker_recipe(config_id: str = BASE_CONFIG_ID) -> dict[str, Any]:
+    if config_id not in SUPPORTED_CONFIG_IDS:
+        raise InputValidationError("Неизвестный профиль ранжировщика")
+    recipe = strict_json_loads(resource_bytes("configs/ranker_recipe.json"))
+    if config_id == NO_METADATA_CONFIG_ID:
+        recipe["dataset"]["categorical_feature"] = []
+    return recipe
 
 
 def resolved_recipe_issues(manifest: dict[str, Any]) -> tuple[ValidationIssue, ...]:
@@ -25,7 +39,8 @@ def resolved_recipe_issues(manifest: dict[str, Any]) -> tuple[ValidationIssue, .
         except OverflowError:
             return False
 
-    expected = strict_json_loads(resource_bytes("configs/ranker_recipe.json"))
+    config_id = manifest["base_model"]["config_id"]
+    expected = get_ranker_recipe(config_id if config_id in SUPPORTED_CONFIG_IDS else BASE_CONFIG_ID)
     actual = manifest["ranker"]["resolved_parameters"]
     if not isinstance(actual, dict):
         invalid("ranker.resolved_parameters", "Нужны четыре полные части рецепта")
@@ -51,7 +66,7 @@ def resolved_recipe_issues(manifest: dict[str, Any]) -> tuple[ValidationIssue, .
                     )
                 elif isinstance(value, str) and not isinstance(supplied_value, str):
                     invalid(f"ranker.resolved_parameters.{group}.{key}", "Нужен строковый параметр")
-            if manifest["base_model"]["config_id"] == "gcs_rk_v2_7":
+            if config_id in SUPPORTED_CONFIG_IDS:
                 for key, value in fields.items():
                     if group == "dataset" and key == "categorical_feature":
                         continue  # Actual column name is checked against the feature schema.

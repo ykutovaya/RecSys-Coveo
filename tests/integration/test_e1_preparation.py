@@ -504,15 +504,15 @@ def test_seven_period_datasets_enforce_purpose_and_log_direct_path_attempts(tmp_
     )
     run_dir = tmp_path / "run"
     result = invoke(capsys, arguments("prepare", run_dir, input_dir=input_dir, batch_size=1))
-    assert result["canonical_sessions"] == result["request_count"] == 7
-    assert result["canonical_blocks"] == 14 and result["exclusions"] == {}
+    assert result["canonical_sessions"] == result["request_count"] == 6
+    assert result["canonical_blocks"] == 12 and result["exclusions"] == {}
     assert set(result["selection"]) == set(PERIOD_NAMES)
     audit = []
     access = DatasetAccess(
         run_dir, code_sha256=result["source_sha256"], run_id="integration_e1", audit=audit.append
     )
     for period in PERIOD_NAMES:
-        assert result["selection"][period] == [f"s_{period}"]
+        assert result["selection"][period] == ([] if period == "D" else [f"s_{period}"])
         for kind, record_type, purpose in [
             ("prefixes", PreparedRequest, "prefix"),
             ("targets", TargetRecord, "labels"),
@@ -523,7 +523,7 @@ def test_seven_period_datasets_enforce_purpose_and_log_direct_path_attempts(tmp_
                     iter_sessions(run_dir / path, record_type)
                 )
             else:
-                assert (run_dir / path).is_file()
+                assert (run_dir / path).is_file() is (period != "D")
                 with pytest.raises(InputValidationError):
                     tuple(access.read(path, record_type, purpose=purpose))
     with pytest.raises(InputValidationError):

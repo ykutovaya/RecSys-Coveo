@@ -21,7 +21,7 @@
       {"name": "C_smoke", "start_ms": 600000000, "end_ms": 800000000, "sample_size": 3},
       {"name": "C_select", "start_ms": 800000000, "end_ms": 1000000000, "sample_size": 3},
       {"name": "E", "start_ms": 1000000000, "end_ms": 1200000000, "sample_size": 3},
-      {"name": "D", "start_ms": 1200000000, "end_ms": 1400000000, "sample_size": 3}
+      {"name": "D", "start_ms": 1200000000, "end_ms": 1400000000, "sample_size": 0}
     ],
     "coverage": {
       "source_namespace": "synthetic",

@@ -14,6 +14,14 @@ from coveo_recsys.artifacts import (
     strict_json_loads,
 )
 from coveo_recsys.artifacts.store import _digest
+from coveo_recsys.config.recipes import get_ranker_recipe
+from coveo_recsys.contracts.retrieval import (
+    BASE_CONFIG_ID,
+    NO_METADATA_CONFIG_ID,
+    SUPPORTED_CONFIG_IDS,
+)
+
+from .matrix import validate_no_metadata_schema
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +46,17 @@ def load_ranker(root: Path, *, expected_identity: dict[str, Any] | None = None) 
         identity = summary["identity"]
         if not isinstance(identity, dict):
             raise ArtifactError("Отсутствуют привязки модели")
+        config_id = summary.get("config_id", BASE_CONFIG_ID)
+        if (
+            config_id not in SUPPORTED_CONFIG_IDS
+            or identity.get("config_id", config_id) != config_id
+        ):
+            raise ArtifactError("Неизвестный или несогласованный профиль модели")
+        if config_id == NO_METADATA_CONFIG_ID or "recipe" in summary:
+            if canonical_json_bytes(summary.get("recipe")) != canonical_json_bytes(
+                get_ranker_recipe(config_id)
+            ):
+                raise ArtifactError("Рецепт модели не соответствует закреплённому профилю")
         _digest(identity["catalog_sha256"])
         _digest(summary["feature_schema_sha256"])
         _digest(summary["model_sha256"])
@@ -51,11 +70,13 @@ def load_ranker(root: Path, *, expected_identity: dict[str, Any] | None = None) 
         if (
             not isinstance(numeric, list)
             or not numeric
-            or categorical != ["category"]
+            or categorical != ([] if config_id == NO_METADATA_CONFIG_ID else ["category"])
             or any(not isinstance(name, str) or not name for name in numeric)
             or len(set(numeric + categorical)) != len(numeric + categorical)
         ):
             raise ArtifactError("Неверные имена или порядок признаков модели")
+        if config_id == NO_METADATA_CONFIG_ID:
+            validate_no_metadata_schema(tuple(numeric), summary["feature_schema_sha256"])
         trees = summary["actual_tree_count"]
         if type(trees) is not int or not 1 <= trees <= 200:
             raise ArtifactError("Неверное число деревьев модели")
