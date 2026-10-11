@@ -16,13 +16,14 @@ from coveo_recsys.contracts import InputValidationError
 from coveo_recsys.contracts.evaluation import (
     FINAL_POLICIES,
     POLICIES,
+    SELECT_POLICIES,
     EvaluationRecord,
     ReplayRecord,
 )
 from coveo_recsys.contracts.historical import HistoricalPackage
 from coveo_recsys.contracts.preparation import EVALUATION_PROTOCOL, PreparationPlan, PreparedRequest
 from coveo_recsys.contracts.records import Branch, RequestResult
-from coveo_recsys.contracts.retrieval import NO_METADATA_CONFIG_ID
+from coveo_recsys.contracts.retrieval import METADATA370_CONFIG_ID, NO_METADATA_CONFIG_ID
 from coveo_recsys.contracts.serialization import from_json
 from coveo_recsys.contracts.training import TargetRecord
 from coveo_recsys.data.access import DatasetAccess
@@ -54,10 +55,17 @@ def validate_evaluation_plan(evaluation_plan: dict[str, Any], plan: PreparationP
         "плана оценки",
     )
     final = evaluation_plan["period"] == "D"
-    policies = FINAL_POLICIES if final else POLICIES
-    estimates = FINAL_ESTIMATES if final else ESTIMATES
+    selection = evaluation_plan["period"] == "C_select"
+    policies = SELECT_POLICIES if selection else FINAL_POLICIES if final else POLICIES
+    estimates = (
+        (*SELECT_POLICIES, "GCS+Rk-" + METADATA370_CONFIG_ID)
+        if selection
+        else FINAL_ESTIMATES
+        if final
+        else ESTIMATES
+    )
     if (
-        evaluation_plan["period"] not in {"C_smoke", "D"}
+        evaluation_plan["period"] not in {"C_smoke", "C_select", "D"}
         or evaluation_plan["policies"] != list(policies)
         or type(evaluation_plan["k"]) is not int
         or evaluation_plan["k"] != 20
@@ -330,6 +338,7 @@ def summarize_replay(
     *,
     selected_ids: Sequence[str] | None = None,
     d_admission: Callable[[], str] | None = None,
+    selection_admission: Callable[[], str] | None = None,
 ) -> dict[str, Any]:
     """Все выбранные SID и политики; цели присоединяются после закрытых ответов.
 
@@ -341,6 +350,8 @@ def summarize_replay(
     policy_names = tuple(evaluation_plan["policies"])
     if period_name == "D" and (d_admission is None or not d_admission()):
         raise InputValidationError("Нет допуска pre_D")
+    if period_name == "C_select" and (selection_admission is None or not selection_admission()):
+        raise InputValidationError("Нет допуска pre_selection")
     check_budget()
     if source.resolve() == destination.resolve():
         raise InputValidationError("Оценка должна храниться отдельно от принятой подготовки")
@@ -382,6 +393,7 @@ def summarize_replay(
         run_id=prepared["run_id"],
         scope=prepared["scope"],
         d_admission=d_admission,
+        selection_admission=selection_admission,
     )
     prefixes = access.read(
         f"datasets/{period_name}/prefixes.parquet", PreparedRequest, purpose="prefix"
@@ -640,7 +652,9 @@ def summarize_replay(
             service_load="not_measured",
             training_cost="not_supplied_to_reporting",
             full_process_resources="reported_by_command",
-            next_comparison="review_final_result_without_retuning"
+            next_comparison="confirmation_requires_new_unused_period"
+            if period_name == "C_select"
+            else "review_final_result_without_retuning"
             if period_name == "D"
             else "not_selected_pilot_report_requires_review",
             incomplete_telemetry="not_corrected_by_bootstrap",

@@ -191,10 +191,7 @@
     "metadata_sensitivity": "graph_recent_popularity_no_provided_metadata",
     "tie_break": [
       "max_session_hit_count",
-      "min_median_p99",
-      "min_peak_ram",
-      "min_parameter_count",
-      "config_id"
+      "keep_control"
     ]
   },
   "inference": {

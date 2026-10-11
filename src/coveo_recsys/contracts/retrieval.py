@@ -8,7 +8,9 @@ from .records import Record
 
 BASE_CONFIG_ID = "gcs_rk_v2_7"
 NO_METADATA_CONFIG_ID = "graph_recent_popularity_no_provided_metadata"
-SUPPORTED_CONFIG_IDS = (BASE_CONFIG_ID, NO_METADATA_CONFIG_ID)
+METADATA370_CONFIG_ID = "gcs_rk_metadata370"
+METADATA370_QUOTAS = (50, 50, 50, 80, 60, 50, 20, 10)
+SUPPORTED_CONFIG_IDS = (BASE_CONFIG_ID, NO_METADATA_CONFIG_ID, METADATA370_CONFIG_ID)
 NO_METADATA_SOURCES = ("detail_detail", "detail_add", "detail_purchase", "recent", "popularity")
 NO_METADATA_QUOTAS = (50, 50, 50, 0, 0, 0, 20, 10)
 
@@ -57,10 +59,14 @@ class RetrievalConfig(Record):
 
 
 def validate_retrieval_profile(config_id: str, config: RetrievalConfig) -> None:
-    """Два профиля; обязательные квоты и общий M второго закреплены до расчёта."""
+    """Именованные варианты сохраняют заранее закреплённые параметры."""
     if config_id not in SUPPORTED_CONFIG_IDS:
         raise InputValidationError("Неизвестный профиль отбора")
     if config_id == NO_METADATA_CONFIG_ID and (
         config.quotas != NO_METADATA_QUOTAS or config.max_candidates != 300
     ):
         raise InputValidationError("Профиль без метаданных требует фиксированные квоты и M=300")
+    if config_id == METADATA370_CONFIG_ID and config != RetrievalConfig(
+        quotas=METADATA370_QUOTAS, max_candidates=370
+    ):
+        raise InputValidationError("Профиль 370 меняет только квоты описаний и изображений")

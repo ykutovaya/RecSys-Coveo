@@ -1,3 +1,4 @@
+import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -192,8 +193,10 @@ def test_access_rejects_link_outside_root(prepared_access, tmp_path):
     (root / "datasets").mkdir()
     try:
         (root / "datasets/B").symlink_to(outside, target_is_directory=True)
-    except OSError:
-        pytest.skip("ОС не разрешает создавать символические ссылки")
+    except OSError as exc:
+        if sys.platform == "win32" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("windows_symlink_unavailable: WinError 1314")
+        raise
     access = DatasetAccess(root, code_sha256="a" * 64, run_id="sample")
     with pytest.raises(InputValidationError):
         access.read("datasets/B/prefixes.parquet", PreparedRequest, purpose="prefix")

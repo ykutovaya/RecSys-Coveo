@@ -4,10 +4,11 @@
 Python 3.11; зависимости закреплены в [uv.lock](/uv.lock).
 Установка и проверки — в [README](/README.md#установка-и-запуск).
 
-Из чистого клона доступны установка, проверка CSV и подготовка сессий.
-Полное воспроизведение обучения и оценки пока требует переноса локальной сборки
-свидетельств допуска. Ниже этот разрыв отделён от работающей демонстрации;
-готовые данные, модель и каталоги `runs/` в Git не входят.
+Подготовка настроек и свидетельств допуска перенесена в репозиторий. Ниже описан
+малый путь из трёх CSV до модели и отчёта C_smoke, без прежних `runs/`.
+Сквозная проверка на реальных данных завершена 11 октября 2026 года из отдельной
+обычной установки wheel. Внешними входами были только три исходных CSV.
+Готовые данные, модели и каталоги `runs/` в Git не входят.
 
 При локальной проверке `uv sync` взял устаревшую сборку пакета из кеша.
 Обычная установка актуального wheel проверена отдельно. Если после изменения
@@ -137,89 +138,188 @@ HTTP-ответ совпал с записью в `requests.jsonl` катало�
 
 ## Порядок полного расчёта
 
-### Данные, A_G и B
+Этот путь проверяет воспроизведение базового расчёта до C_smoke, не повторяет
+опубликованные результаты D. Варианты без метаданных и на 370 кандидатах,
+C_select, D и сервис сюда не входят. Прежние данные и модели не меняются.
+
+### Данные и пределы
 
 Получите Public Data Release 1.0.0 по [инструкции Coveo](https://github.com/coveooss/SIGIR-ecom-data-challenge#license),
 приняв условия самостоятельно. В `data/01_raw/` нужны `browsing_train.csv`,
 `search_train.csv`, `sku_to_content.csv`; архив переносить не требуется.
 Схема и ожидаемые контрольные суммы — в [профиле](/configs/coveo_supply_v1.json).
 
-Ниже команды новой подготовки; они читают большие CSV и **не нужны для повторного
-запуска готового API**. При повторении используйте новые имена каталогов.
+Согласованный 11 октября 2026 года малый запуск: до **2 000 сессий A_G,
+2 000 B и 1 000 C_smoke**;
+на вычислительную команду — 1 час, 4 ГиБ памяти, 4 ГиБ временных файлов,
+2 ГиБ результата там, где команда поддерживает такой предел.
+Все пределы соблюдены; [измерения ниже](/documents/reproduction.md#результат-малого-прогона).
+Малый выход всё равно требует чтения больших CSV.
+
+У `data prepare` параметр `max_temp_bytes` ограничивает временные файлы,
+но отдельного ограничения размера готовых таблиц нет. Историческая сборка,
+признаки, обучение и `replay` проверяют собственный предел результата.
+Расход диска подготовки остаётся отдельным условием наблюдения.
+
+Выполняйте команды последовательно; при ошибке не переходите к следующему шагу.
+Для нового расчёта используйте новый `$work`. `$csv` может указывать на внешний
+каталог с теми же тремя файлами: копировать CSV в чистый клон не требуется.
 
 ```powershell
-uv run --no-sync coveo-recsys data inspect-supply `
-  --input-dir data/01_raw --profile configs/coveo_supply_v1.json `
-  --run-id supply-new --run-dir runs/supply-new
-uv run --no-sync coveo-recsys data prepare `
-  --input-dir data/01_raw --profile configs/coveo_supply_v1.json `
-  --plan configs/coveo_preparation.json `
-  --run-id ag50000-new --run-dir runs/ag50000-new
+$python = '.\.venv\Scripts\python.exe'
+$cli = '.\.venv\Scripts\coveo-recsys.exe'
+$work = 'runs/reproduction-small-v1'
+$csv = 'data/01_raw'
+$helper = @(
+  '-m', 'coveo_recsys.verification.reproduce',
+  '--work-dir', $work, '--input-dir', $csv,
+  '--max-result-bytes', '2147483648'
+)
+$prepare = @('--input-dir', $csv, '--profile', 'configs/coveo_supply_v1.json')
+
+& $python @helper init --ag-sessions 2000 --b-sessions 2000 --smoke-sessions 1000 `
+  --max-seconds 3600 --max-memory-bytes 4294967296 --max-temp-bytes 4294967296
+if ($LASTEXITCODE -ne 0) { throw 'Планы не созданы' }
 ```
 
-Историческая сборка должна ссылаться на **новый** результат, а не на прежний A_G
-из опубликованных настроек. Создание локальной копии с фактическим хешем:
+`init` создаёт `A_G-plan.json`, `B-plan.json`, `C_smoke-plan.json`.
+Периоды, seed 17, цель `observed_purchases_v1` и отбор целых сессий сохраняются.
+Размер задаётся до анализа покупок; недобор допустим только при недостатке
+подходящих сессий, не ради изменения состава целей.
+
+### Проверки кода до чтения CSV
 
 ```powershell
-New-Item -ItemType Directory -Path runs/reproduction-settings -ErrorAction Stop
-$utf8 = New-Object System.Text.UTF8Encoding($false)
-$historical = Get-Content configs/coveo_historical.json -Raw -Encoding UTF8 | ConvertFrom-Json
-$historical.preparation.path = 'runs/ag50000-new'
-$historical.preparation.report_sha256 = (Get-FileHash `
-  runs/ag50000-new/reports/preparation.json -Algorithm SHA256).Hash.ToLowerInvariant()
-[IO.File]::WriteAllText(
-  (Join-Path (Get-Location) 'runs/reproduction-settings/historical.json'),
-  ($historical | ConvertTo-Json -Depth 30), $utf8)
-uv run --no-sync coveo-recsys historical build `
-  --config runs/reproduction-settings/historical.json `
-  --run-id historical-new --run-dir runs/historical-new
-
-$plan = Get-Content configs/coveo_preparation.json -Raw -Encoding UTF8 | ConvertFrom-Json
-foreach ($period in $plan.data.periods) {
-  $period.sample_size = if ($period.name -eq 'B') { 50000 } else { 0 }
-}
-[IO.File]::WriteAllText(
-  (Join-Path (Get-Location) 'runs/reproduction-settings/b-plan.json'),
-  ($plan | ConvertTo-Json -Depth 30), $utf8)
-uv run --no-sync coveo-recsys data prepare `
-  --input-dir data/01_raw --profile configs/coveo_supply_v1.json `
-  --plan runs/reproduction-settings/b-plan.json `
-  --run-id b50000-new --run-dir runs/b50000-new
+& $python @helper tests
+if ($LASTEXITCODE -ne 0) { throw 'Нет полного результата обязательных проверок' }
 ```
 
-Периоды, seed, правила допуска и пределы ресурсов сохраняются. Отбор не зависит
-от наличия покупки; недобор допустим только при недостатке допущенных сессий.
-Подготовка B не открывает доступ к его признакам и обучению.
+Команда запускает обычный pytest без Coveo и нагрузки, сохраняет JUnit,
+статистику свойств и состав исходников в `$work/tests/`. Старые результаты
+не подставляются. После этой команды код и настройки в репозитории не меняйте.
 
-### Обучение и оценка: пока не автономная инструкция
+Для локального допуска на Windows разрешены только явно перечисленные пропуски
+тестов символических ссылок по причине `WinError 1314`; они остаются `skipped`
+в JUnit и сводке, а не превращаются в успешные проверки. На Ubuntu эти тесты
+обязательны. Другие пропуски, ошибки и изменение исходников запрещают продолжение;
+правило закреплено в [ТЗ §15.1](/documents/implementation_spec.md#151-общий-порядок).
+В чистом каталоге `runs/reproduction-clean-v1/` проверена обычная установка wheel:
+пакет загружен из `site-packages`, его код совпал с исходниками. Полный pytest
+без Coveo и нагрузки завершён за 308,73 с: 2 150 проверок пройдены,
+8 проверок символических ссылок пропущены по согласованному правилу,
+1 проверка исключена маркером. Состав проверок к `preflight` и `post_training`
+подтверждён; это ещё не допуск данных и не результат оценки C_smoke.
 
-Следующая таблица показывает существующие команды и их входы, **не заменяет
-отсутствующую сборку допусков**. Форматы настроек — в [configs/README.md](/configs/README.md).
+### A_G, исторический пакет и B
 
-| Шаг | Команда | Необходимые входы |
-|---|---|---|
-| Допуск B | `manifest validate --stage preflight` | Паспорт, фактические проверки B, результаты тестов и привязки к коду, плану, схемам и рецепту |
-| Признаки B | `features build --period B` | Принятый B, исторический пакет, схема 93 признаков, настройки отбора и действительный допуск |
-| Модель | `train ranker` | Те же входы, готовые признаки B, рецепт LightGBM |
-| Проверка C_smoke | `data prepare --evaluation-config ...`, затем `replay --period C_smoke` | Закреплённый план, готовая модель, допуск `post_training`; после подготовки — её фактический хеш |
-| Без метаданных | `sensitivity metadata --step features`, затем `--step train` | Тот же B, отдельные схема, рецепт, квоты, допуск и каталоги результата |
-| D | `data prepare --evaluation-config ...`, затем `evaluate` | Обе модели, заранее закреплённый план `pre_D`, затем подготовленный D; после оценки — `post_D` |
+```powershell
+& $cli data prepare @prepare --plan "$work/A_G-plan.json" `
+  --run-id reproduction-small-ag --run-dir "$work/a_g"
+if ($LASTEXITCODE -ne 0) { throw 'Подготовка A_G не завершена' }
+& $python @helper check-ag
+if ($LASTEXITCODE -ne 0) { throw 'A_G не прошёл независимую сверку' }
+& $python @helper historical
+if ($LASTEXITCODE -ne 0) { throw 'Настройки исторической сборки не созданы' }
+& $cli historical build --config "$work/historical.json" `
+  --run-id reproduction-small-historical --run-dir "$work/historical"
+if ($LASTEXITCODE -ne 0) { throw 'Историческая сборка не завершена' }
 
-Каждая вычислительная команда принимает собственные `--config`, `--run-dir`
-и `--run-id`. Выбор через C_select не обязателен для воспроизведения исходной
-оценки D: вариант 370 исследован позднее и не заменяет основную модель.
+& $cli data prepare @prepare --plan "$work/B-plan.json" `
+  --run-id reproduction-small-b --run-dir "$work/b"
+if ($LASTEXITCODE -ne 0) { throw 'Подготовка B не завершена' }
+& $python @helper check-b
+if ($LASTEXITCODE -ne 0) { throw 'B не прошёл независимую сверку' }
+```
 
-Открытое препятствие: свидетельства проверок и паспорта реальных запусков
-собирались локальными вспомогательными скриптами, которые не входят в репозиторий.
-Часть этих скриптов зависит от прежнего B на 10 000 сессий и истории запусков.
-Команда `manifest init` создаёт шаблон, а `manifest validate` проверяет свидетельства,
-но ни одна не создаёт их вместо реальных проверок.
+`check-ag` и `check-b` сверяют общие таблицы с опубликованными строками выбранных
+сессий: временные границы, первый запрос, префикс, цели и разделение периодов.
+Рабочие канонизатор и расчёт целей не используются как эталон. Повторная проверка
+не требует прежнего B на 10 000 сессий или посессионных файлов.
 
-Для автономного воспроизведения нужно перенести прямую проверку нового B и сборку
-свидетельств из актуальных результатов тестов без зависимости от старых запусков.
-Копирование прежних паспортов, подстановка фиктивных хешей или отключение допуска
-не решают задачу. Пока эта часть не упакована, обещать полный запуск из чистого
-клона нельзя. В текущей проверке публикации полный расчёт не повторялся.
+### Допуск, признаки и модель
+
+```powershell
+& $python @helper features
+if ($LASTEXITCODE -ne 0) { throw 'Допуск preflight не получен' }
+& $cli features build --period B --config "$work/features.json" `
+  --run-id reproduction-small-features --run-dir "$work/b_features"
+if ($LASTEXITCODE -ne 0) { throw 'Расчёт признаков не завершён' }
+
+& $python @helper train
+if ($LASTEXITCODE -ne 0) { throw 'Настройки обучения не созданы' }
+& $cli train ranker --config "$work/train.json" `
+  --run-id reproduction-small-ranker --run-dir "$work/ranker"
+if ($LASTEXITCODE -ne 0) { throw 'Обучение не завершено' }
+```
+
+`features` собирает `preflight` из фактических проверок нового запуска и создаёт
+настройки. `train` закрепляет готовые признаки; сама модель обучается отдельной
+командой. Квоты на 300 кандидатов, схема признаков и рецепт LightGBM не меняются.
+Если нет целей или обучающих пар, не увеличивайте выборку по увиденным покупкам:
+сохраните отказ и отдельно согласуйте следующий объём.
+
+### C_smoke и отчёт
+
+```powershell
+& $python @helper evaluation-preparation
+if ($LASTEXITCODE -ne 0) { throw 'Допуск post_training/evaluate не получен' }
+& $cli data prepare @prepare --plan "$work/C_smoke-plan.json" `
+  --evaluation-config "$work/evaluation-preparation.json" `
+  --run-id reproduction-small-csmoke --run-dir "$work/c_smoke"
+if ($LASTEXITCODE -ne 0) { throw 'Подготовка C_smoke не завершена' }
+& $python @helper check-csmoke
+if ($LASTEXITCODE -ne 0) { throw 'C_smoke не прошёл независимую сверку' }
+& $python @helper replay
+if ($LASTEXITCODE -ne 0) { throw 'Настройки оценки не созданы' }
+& $cli replay --period C_smoke --config "$work/replay.json" `
+  --run-id reproduction-small-replay --run-dir "$work/evaluation"
+if ($LASTEXITCODE -ne 0) { throw 'Оценка не завершена' }
+```
+
+`evaluation-preparation` проверяет готовую модель, связывает её с собственными
+признаками и B, затем создаёт `post_training` с B12 и `operation=evaluate`.
+`check-csmoke` повторяет прямую проверку новых данных; `replay` подставляет их
+фактический хеш. Исходы присоединяются после расчёта рекомендаций.
+
+Результат: `$work/evaluation/reports/replay.json` и `replay.md`, таблицы ответов
+и сессионных оценок. В отчёте GCS+Rk, P и R нужно смотреть число сессий с
+зарегистрированной целью и Hit@20 именно на них. Полнота телеметрии неизвестна;
+пустая цель не считается отрицательным исходом. Параметры интервалов не получают
+выдуманного обоснования: статус `insufficient` допустим.
+
+Все настройки и свидетельства собирает
+[verification/reproduce.py](/src/coveo_recsys/verification/reproduce.py) из текущих
+файлов и проверок, без зависимости от прежних `runs/`.
+
+### Результат малого прогона
+
+Путь завершён в `runs/reproduction-clean-v1/runs/reproduction-small-v1/`.
+Пакет загружался из `site-packages`; установленный код совпал с проверенными
+исходниками. Прежние данные, модели и результаты D не изменены.
+
+| Шаг | Объём | Время, с | Пиковая память, МиБ |
+|---|---|---:|---:|
+| Подготовка A_G | 2 000 сессий | 518,09 | 104,05 |
+| Подготовка B | 2 000 сессий | 619,45 | 99,06 |
+| Подготовка C_smoke | 1 000 сессий | 648,97 | 123,74 |
+| Исторический пакет | 2 794 SKU | 5,67 | 139,43 |
+| Признаки B | 2 000 запросов, 600 000 строк | 291,75 | 150,80 |
+| Обучение | 200 деревьев | 112,39 | 319,57 |
+| Оценка C_smoke | 1 000 запросов | 127,38 | 215,66 |
+
+Прямые сверки A_G, B и C_smoke прошли за 87,67, 121,38 и 88,31 с соответственно.
+Пик временных файлов каждой подготовки — 467,40 МиБ. Четыре готовые таблицы
+A_G, B и C_smoke занимают соответственно 3,68, 3,36 и 1,60 МиБ, без служебных JSON.
+Каталоги признаков, модели и оценки заняли 59,46, 0,13 и 22,56 МиБ.
+
+В A_G, B и C_smoke зарегистрированная цель есть у 22, 24 и 12 сессий соответственно.
+Для обучения пригодны 11 положительных кандидатов, 7 189 отрицательных и 3 289 пар.
+На C_smoke Hit@20 среди 12 сессий с целью: GCS+Rk — 3/12 (25%),
+P — 1/12 (8,33%), R — 3/12 (25%). У остальных 988 сессий исход неизвестен.
+Интервалы имеют статус `insufficient`: мало временных блоков и категорий,
+предпосылки зависимости не подтверждены, требуемая точность не обоснована.
+Эти числа проверяют воспроизведение базового пути, а не качество основной модели
+или опубликованные результаты D.
 
 ## Измеренные затраты
 

@@ -154,13 +154,13 @@ def test_manifest_command_rejects_invalid_json_before_validation(tmp_path, capsy
 def test_redirected_cli_output_is_utf8(tmp_path):
     environment = dict(os.environ, PYTHONIOENCODING="cp1251")
     unsupported = subprocess.run(
-        [sys.executable, "-m", "coveo_recsys", "select"],
+        [sys.executable, "-m", "coveo_recsys", "load"],
         capture_output=True,
         encoding="utf-8",
         env=environment,
     )
     assert unsupported.returncode == 2
-    assert "Команда select ещё не реализована" in unsupported.stderr
+    assert "Команда load ещё не реализована" in unsupported.stderr
     invalid = subprocess.run(
         [
             sys.executable,

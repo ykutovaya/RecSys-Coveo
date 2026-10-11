@@ -55,7 +55,7 @@ def require_training_admission(
     Свидетельство data закрепляет точные план и отчёт; контрольные суммы исходных
     CSV повторно проверяет существующий валидатор, без разбора будущих событий.
     """
-    if stage not in {"preflight", "post_training", "pre_D"}:
+    if stage not in {"preflight", "post_training", "pre_selection", "pre_D"}:
         raise InputValidationError("Неверная стадия допуска B/C_smoke")
     if prepared.get("scope") == historical.scope == "synthetic":
         return None
@@ -65,7 +65,7 @@ def require_training_admission(
         )
     try:
         expected = {"manifest", "manifest_sha256", "run_dir", "input_paths"}
-        if stage == "pre_D":
+        if stage in {"pre_selection", "pre_D"}:
             expected.add("plan_references")
         if set(admission) != expected:
             raise InputValidationError("Нужны паспорт, его SHA-256, каталог и три исходных пути")
@@ -211,7 +211,11 @@ def require_training_admission(
             store,
             input_paths=paths,
             operation=operation,
-            **({"plan_references": admission["plan_references"]} if stage == "pre_D" else {}),
+            **(
+                {"plan_references": admission["plan_references"]}
+                if stage in {"pre_selection", "pre_D"}
+                else {}
+            ),
         )
         if not result.gate_passed:
             detail = "; ".join(f"{issue.path}: {issue.message}" for issue in result.issues)
@@ -242,12 +246,12 @@ def require_replay_admission(
     Код и preflight принадлежат потребителю. Идентичность модели сохраняет
     производителя, но связывается с принятым B, схемой и историческим пакетом.
     """
-    if period not in {"C_smoke", "D"} or [p.name for p in plan.periods if p.sample_size] != [
-        period
-    ]:
+    if period not in {"C_smoke", "C_select", "D"} or [
+        p.name for p in plan.periods if p.sample_size
+    ] != [period]:
         raise InputValidationError("Оценочная подготовка разрешена только для C_smoke")
     final_digest = None
-    if period == "D":
+    if period in {"C_select", "D"}:
         if final_gate is None or not (final_digest := final_gate()):
             raise InputValidationError("Нет допуска pre_D")
     try:
@@ -291,7 +295,7 @@ def require_replay_admission(
                 or any(ids for name, ids in prepared["selection"].items() if name != period)
             ):
                 raise InputValidationError("Состав C_smoke не соответствует плану")
-        if period == "D":
+        if period in {"C_select", "D"}:
             return final_digest
         if plan.scope == historical.scope == "synthetic":
             return None
@@ -346,21 +350,40 @@ def final_execution_binding(project_root: Path, settings: dict[str, Any]) -> dic
         key: value for key, value in settings.items() if key not in {"admission", "preparation"}
     }
     files = {"preparation_plan": sha256_file(project_root / settings["preparation_plan"])}
-    for name, profile in (("primary", settings), ("metadata", settings["metadata_sensitivity"])):
+    variant_key = (
+        "candidate_variant"
+        if settings["evaluation_plan"]["period"] == "C_select"
+        else "metadata_sensitivity"
+    )
+    for name, profile in (("primary", settings), ("metadata", settings[variant_key])):
         for key in ("feature_schema", "recipe"):
             files[f"{name}/{key}"] = sha256_file(project_root / profile[key])
     return {"settings": execution, "files": files}
 
 
-def require_final_admission(project_root: Path, settings: dict[str, Any]) -> str:
+def require_selection_admission(project_root: Path, settings: dict[str, Any]) -> str:
+    return require_final_admission(project_root, settings, period="C_select")
+
+
+def require_final_admission(
+    project_root: Path, settings: dict[str, Any], *, period: str = "D"
+) -> str:
     """Действующий pre_D и точные входы двух моделей, до любого обращения к D."""
     from coveo_recsys.config.manifest import fixed_policy_without_selection
-    from coveo_recsys.contracts.retrieval import BASE_CONFIG_ID, NO_METADATA_CONFIG_ID
+    from coveo_recsys.contracts.retrieval import (
+        BASE_CONFIG_ID,
+        METADATA370_CONFIG_ID,
+        NO_METADATA_CONFIG_ID,
+    )
     from coveo_recsys.data.prepared import read_report
     from coveo_recsys.evaluation.reporting import validate_evaluation_plan
     from coveo_recsys.historical.load import PACKAGE_PATH
 
     try:
+        stage = "pre_selection" if period == "C_select" else "pre_D"
+        plan_name = "before_C_select" if period == "C_select" else "before_D"
+        variant_key = "candidate_variant" if period == "C_select" else "metadata_sensitivity"
+        variant_id = METADATA370_CONFIG_ID if period == "C_select" else NO_METADATA_CONFIG_ID
         if not isinstance(settings, dict):
             raise InputValidationError("Для допуска pre_D нужен объект настроек")
         admission = settings.get("admission")
@@ -371,19 +394,19 @@ def require_final_admission(project_root: Path, settings: dict[str, Any]) -> str
             "input_paths",
             "plan_references",
         }:
-            raise InputValidationError("Для D нужен допуск pre_D с внешней ссылкой before_D")
+            raise InputValidationError(f"Нужен допуск {stage} с внешней ссылкой {plan_name}")
         manifest_bytes = (project_root / admission["manifest"]).read_bytes()
         digest = sha256_bytes(manifest_bytes)
         _same(digest, admission["manifest_sha256"], "SHA-256 pre_D")
         manifest = strict_json_loads(manifest_bytes)
-        _same(manifest["stage"], "pre_D", "стадия D")
+        _same(manifest["stage"], stage, "стадия оценки")
         store_path = project_root / admission["run_dir"]
         if not store_path.is_dir():
             raise InputValidationError("Нет свидетельств pre_D")
         store = LocalArtifactStore(store_path)
         result = validate_manifest(
             manifest,
-            "pre_D",
+            stage,
             store,
             plan_references=admission["plan_references"],
             input_paths={
@@ -396,7 +419,7 @@ def require_final_admission(project_root: Path, settings: dict[str, Any]) -> str
                 "Допуск pre_D не пройден: "
                 + "; ".join(f"{issue.path}: {issue.message}" for issue in result.issues)
             )
-        if not fixed_policy_without_selection(manifest):
+        if period == "D" and not fixed_policy_without_selection(manifest):
             raise InputValidationError("evaluate поддерживает одну закреплённую базу без подбора")
         if "pilot_sessions" in settings:
             raise InputValidationError("D оценивается целиком по закреплённому плану, не как пилот")
@@ -405,11 +428,24 @@ def require_final_admission(project_root: Path, settings: dict[str, Any]) -> str
         )
         evaluation = settings["evaluation_plan"]
         validate_evaluation_plan(evaluation, plan)
-        _same(evaluation["period"], "D", "период итоговой оценки")
-        _same([p.name for p in plan.periods if p.sample_size], ["D"], "отбор только D")
+        _same(evaluation["period"], period, "оценочный период")
+        _same(
+            [p.name for p in plan.periods if p.sample_size], [period], "отбор только одного периода"
+        )
         if plan.scope == "actual" and manifest["scope"] not in {"actual", "offline_first_run"}:
             raise InputValidationError("Искусственный допуск не открывает реальный D")
-        frozen = strict_json_loads(store.read_by_sha256(admission["plan_references"]["before_D"]))
+        frozen = strict_json_loads(store.read_by_sha256(admission["plan_references"][plan_name]))
+        if period == "C_select":
+            _same(
+                [c["config_id"] for c in manifest["selection"]["registered_configurations"]],
+                [BASE_CONFIG_ID, METADATA370_CONFIG_ID],
+                "два закреплённых варианта",
+            )
+            _same(
+                manifest["selection"]["tie_break"],
+                ["max_session_hit_count", "keep_control"],
+                "правило выбора",
+            )
         _same(
             frozen.get("execution"),
             final_execution_binding(project_root, settings),
@@ -469,7 +505,7 @@ def require_final_admission(project_root: Path, settings: dict[str, Any]) -> str
                     }
                 )
             ),
-            stage="pre_D",
+            stage=stage,
             operation="evaluate",
         )
         models = strict_json_loads(
@@ -477,7 +513,7 @@ def require_final_admission(project_root: Path, settings: dict[str, Any]) -> str
         )
         for config_id, profile in (
             (BASE_CONFIG_ID, settings),
-            (NO_METADATA_CONFIG_ID, settings["metadata_sensitivity"]),
+            (variant_id, settings[variant_key]),
         ):
             content = (project_root / profile["model"]["path"] / "reports/ranker.json").read_bytes()
             _same(sha256_bytes(content), profile["model"]["report_sha256"], "отчёт готовой модели")
@@ -517,7 +553,11 @@ def require_evaluation_preparation(
         settings = strict_json_loads(settings_path.read_bytes())
         period = settings["evaluation_plan"]["period"]
         final_gate = (
-            (lambda: require_final_admission(project_root, settings)) if period == "D" else None
+            (lambda: require_selection_admission(project_root, settings))
+            if period == "C_select"
+            else (lambda: require_final_admission(project_root, settings))
+            if period == "D"
+            else None
         )
         if final_gate is not None:
             final_gate()
@@ -543,7 +583,7 @@ def require_evaluation_preparation(
         historical_store = LocalArtifactStore(project_root / settings["historical"]["path"])
         historical = historical_store.describe(PACKAGE_PATH)
         _same(historical.sha256, settings["historical"]["package_sha256"], "исторический пакет")
-        if period == "D":
+        if period in {"C_select", "D"}:
             package = load_historical(historical_store)
             if "metadata_path" in settings:
                 _same(
@@ -573,16 +613,17 @@ def require_evaluation_preparation(
             "configuration": retrieval,
         }.items():
             _same(features["identity"][name], expected, f"признаки B/{name}")
-        if period == "D":
+        if period in {"C_select", "D"}:
             from coveo_recsys.cli.replay import load_sensitivity_model
 
             load_sensitivity_model(
                 project_root,
-                settings["metadata_sensitivity"],
+                settings["candidate_variant" if period == "C_select" else "metadata_sensitivity"],
                 training_hash=training["report_sha256"],
                 historical_hash=historical.sha256,
                 catalog_hash=model_summary["identity"]["catalog_sha256"],
                 scope=plan.scope,
+                **({"config_id": "gcs_rk_metadata370"} if period == "C_select" else {}),
             )
         return require_replay_admission(
             project_root,

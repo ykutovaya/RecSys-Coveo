@@ -68,6 +68,8 @@ def validator_fingerprint_bytes() -> bytes:
         "configs/test_registry.json",
         "configs/ranker_recipe.json",
         "configs/feature_schema_no_metadata.json",
+        "configs/feature_schema.json",
+        "configs/feature_schema_metadata370.json",
     ):
         inventory[name] = sha256_bytes(resource_bytes(name))
     return canonical_json_bytes(inventory)

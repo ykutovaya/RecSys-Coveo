@@ -21,12 +21,14 @@ from coveo_recsys.contracts import InputValidationError, id_bytes, require_int64
 from coveo_recsys.contracts.evaluation import (
     FINAL_POLICIES,
     POLICIES,
+    SELECT_POLICIES,
     EvaluationRecord,
     ReplayRecord,
 )
 from coveo_recsys.contracts.preparation import PreparationPlan, PreparedRequest
 from coveo_recsys.contracts.records import CanonicalBlock, FeatureBatch
 from coveo_recsys.contracts.retrieval import (
+    METADATA370_CONFIG_ID,
     NO_METADATA_CONFIG_ID,
     RetrievalConfig,
     validate_retrieval_profile,
@@ -63,8 +65,9 @@ def load_sensitivity_model(
     historical_hash: str,
     catalog_hash: str,
     scope: str,
+    config_id: str = NO_METADATA_CONFIG_ID,
 ) -> tuple[dict[str, Any], RetrievalConfig, RankerModel]:
-    """Проверить собственные B, схему, рецепт и модель варианта без метаданных."""
+    """Проверить собственные B, схему, рецепт и модель второго варианта."""
     if not isinstance(settings, dict) or set(settings) != {
         "model",
         "training_features",
@@ -75,20 +78,23 @@ def load_sensitivity_model(
         raise InputValidationError("Неполные входы чувствительности без метаданных")
     schema_bytes = (root / settings["feature_schema"]).read_bytes()
     schema = strict_json_loads(schema_bytes)
-    validate_no_metadata_schema(
-        tuple(column["name"] for column in schema["columns"]),
-        sha256_bytes(canonical_json_bytes(schema)),
-    )
+    if config_id == NO_METADATA_CONFIG_ID:
+        validate_no_metadata_schema(
+            tuple(column["name"] for column in schema["columns"]),
+            sha256_bytes(canonical_json_bytes(schema)),
+        )
+    if schema["config_id"] != config_id:
+        raise InputValidationError("Схема относится к другому варианту")
     if validate_feature_schema(schema) or schema["event_semantics"] != "set_v1":
         raise InputValidationError("Неверная схема без метаданных")
     recipe_bytes = (root / settings["recipe"]).read_bytes()
     recipe = strict_json_loads(recipe_bytes)
-    validate_recipe(recipe, config_id=NO_METADATA_CONFIG_ID)
+    validate_recipe(recipe, config_id=config_id)
     configuration = dict(settings["retrieval"])
     if "quotas" in configuration:
         configuration["quotas"] = tuple(configuration["quotas"])
     config = RetrievalConfig(**configuration)
-    validate_retrieval_profile(NO_METADATA_CONFIG_ID, config)
+    validate_retrieval_profile(config_id, config)
     feature_bytes = (
         root / settings["training_features"]["path"] / "reports/features.json"
     ).read_bytes()
@@ -124,6 +130,8 @@ def load_sensitivity_model(
     model = load_ranker(root / settings["model"]["path"], expected_identity=summary["identity"])
     if model.summary != summary:
         raise InputValidationError("Модель без метаданных изменилась при загрузке")
+    if model.summary.get("config_id") != config_id:
+        raise InputValidationError("Модель относится к другому варианту")
     return schema, config, model
 
 
@@ -136,14 +144,16 @@ def read_report(run: Path) -> dict[str, Any]:
     store = LocalArtifactStore(run)
     summary = strict_json_loads(store._path(REPORT).read_bytes())
     period = summary.get("identity", {}).get("period") if isinstance(summary, dict) else None
-    policies = FINAL_POLICIES if period == "D" else POLICIES
+    policies = (
+        SELECT_POLICIES if period == "C_select" else FINAL_POLICIES if period == "D" else POLICIES
+    )
     if (
         not isinstance(summary, dict)
         or summary.get("status") != "completed"
         or summary.get("format_version") != "replay_v1"
         or summary.get("identity", {}).get("format_version") != "replay_v1"
         or summary.get("identity", {}).get("mode") != "ideal_deterministic"
-        or period not in {"C_smoke", "D"}
+        or period not in {"C_smoke", "C_select", "D"}
         or summary.get("identity", {}).get("policies") != list(policies)
         or type(summary.get("requests")) is not int
         or summary["requests"] < 0
@@ -174,9 +184,13 @@ def run_replay(
     period: str = "C_smoke",
     before_publish: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
-    if period not in {"C_smoke", "D"}:
+    if period not in {"C_smoke", "C_select", "D"}:
         raise InputValidationError("Разрешены только replay C_smoke и evaluate D")
-    from coveo_recsys.cli.admission import require_final_admission, require_replay_admission
+    from coveo_recsys.cli.admission import (
+        require_final_admission,
+        require_replay_admission,
+        require_selection_admission,
+    )
     from coveo_recsys.cli.features import LIMITS
     from coveo_recsys.cli.preparation import _peak_memory
     from coveo_recsys.evaluation.reporting import (
@@ -189,10 +203,18 @@ def run_replay(
     settings_bytes = settings_path.read_bytes()
     settings = strict_json_loads(settings_bytes)
     final_gate = (
-        (lambda: require_final_admission(project_root, settings)) if period == "D" else None
+        (lambda: require_selection_admission(project_root, settings))
+        if period == "C_select"
+        else (lambda: require_final_admission(project_root, settings))
+        if period == "D"
+        else None
     )
     final_digest = final_gate() if final_gate is not None else None
-    policies = FINAL_POLICIES if period == "D" else POLICIES
+    policies = (
+        SELECT_POLICIES if period == "C_select" else FINAL_POLICIES if period == "D" else POLICIES
+    )
+    variant_key = "candidate_variant" if period == "C_select" else "metadata_sensitivity"
+    variant_id = METADATA370_CONFIG_ID if period == "C_select" else NO_METADATA_CONFIG_ID
     required = {
         "preparation",
         "training_preparation",
@@ -206,8 +228,8 @@ def run_replay(
         "evaluation_plan",
         "limits",
     }
-    if period == "D":
-        required.add("metadata_sensitivity")
+    if period in {"C_select", "D"}:
+        required.add(variant_key)
     if (
         not isinstance(settings, dict)
         or not required <= settings.keys()
@@ -264,7 +286,9 @@ def run_replay(
     validate_recipe(recipe)
     evaluation_plan = settings["evaluation_plan"]
     validate_evaluation_plan(evaluation_plan, plan)
-    if evaluation_plan["period"] != period or (period == "D" and pilot_sessions is not None):
+    if evaluation_plan["period"] != period or (
+        period in {"C_select", "D"} and pilot_sessions is not None
+    ):
         raise InputValidationError("План не соответствует полному оценочному периоду")
     configuration = dict(settings["retrieval"])
     if "quotas" in configuration:
@@ -311,17 +335,18 @@ def run_replay(
         raise InputValidationError("Признаки, схема, отбор или рецепт не соответствуют модели")
     model = load_ranker(roots["model"], expected_identity=mid)
     sensitivity = None
-    if period == "D":
+    if period in {"C_select", "D"}:
         sensitivity = load_sensitivity_model(
             project_root,
-            settings["metadata_sensitivity"],
+            settings[variant_key],
             training_hash=settings["training_preparation"]["report_sha256"],
             historical_hash=head.sha256,
             catalog_hash=catalog_hash,
             scope=plan.scope,
+            config_id=variant_id,
         )
         for name in ("model", "training_features"):
-            path = (project_root / settings["metadata_sensitivity"][name]["path"]).resolve()
+            path = (project_root / settings[variant_key][name]["path"]).resolve()
             if destination == path or destination in path.parents or path in destination.parents:
                 raise InputValidationError("Результат пересекается с входами чувствительности")
     package = load_historical(historical_store)
@@ -412,8 +437,8 @@ def run_replay(
         "manifest_sha256": manifest_hash,
         **(
             {
-                "metadata_sensitivity": {
-                    "settings": settings["metadata_sensitivity"],
+                variant_key: {
+                    "settings": settings[variant_key],
                     "model_identity": sensitivity[2].summary["identity"],
                 }
             }
@@ -431,11 +456,12 @@ def run_replay(
         if sensitivity is not None:
             checked = load_sensitivity_model(
                 project_root,
-                settings["metadata_sensitivity"],
+                settings[variant_key],
                 training_hash=settings["training_preparation"]["report_sha256"],
                 historical_hash=head.sha256,
                 catalog_hash=catalog_hash,
                 scope=plan.scope,
+                config_id=variant_id,
             )
             if (
                 checked[0] != sensitivity[0]
@@ -529,6 +555,7 @@ def run_replay(
         scope=prepared["scope"],
         audit=audit.append,
         d_admission=d_access_gate if period == "D" else None,
+        selection_admission=d_access_gate if period == "C_select" else None,
     )
     stage, processed, last_stage, last_progress = "prefixes", 0, "", 0.0
 
@@ -618,11 +645,19 @@ def run_replay(
         sensitivity_engine = None
         if sensitivity is not None:
             sensitivity_engine = FeatureEngine(
-                RetrievalIndex(package, catalog_hash, config_id=NO_METADATA_CONFIG_ID),
+                RetrievalIndex(
+                    package,
+                    catalog_hash,
+                    observed_records if period == "C_select" else None,
+                    config_id=variant_id,
+                ),
                 sensitivity[0],
                 sensitivity[1],
             )
         stage, processed = "recommendations", 0
+        calculation_seconds = dict.fromkeys(policies, 0.0)
+        write_seconds = 0.0
+        recommendation_started = time.perf_counter()
         check_budget()
         with TableWriter(
             store._path(ANSWERS), ReplayRecord, batch_rows=limits["batch_size"]
@@ -657,7 +692,7 @@ def run_replay(
                 for policy in policies:
                     active_engine, active_model, active_schema = engine, model, schema
                     active_context = context
-                    if policy == NO_METADATA_CONFIG_ID:
+                    if policy == variant_id:
                         if sensitivity is None or sensitivity_engine is None:
                             raise InputValidationError("Нет собственной модели чувствительности")
                         active_engine, active_model, active_schema = (
@@ -667,12 +702,13 @@ def run_replay(
                         )
                         active_context = bind_context(item, active_engine.index)
                     diagnostics: dict[str, Any] = {}
+                    calculation_tick = time.perf_counter()
                     tick = time.monotonic()
                     answer = recommend(
                         active_context,
                         active_engine,
                         active_model,
-                        policy="GCS+Rk" if policy == NO_METADATA_CONFIG_ID else policy,
+                        policy="GCS+Rk" if policy == variant_id else policy,
                         package_id=active_model.summary["model_sha256"],
                         trace_ref=f"{run_id}/{ANSWERS}#{item.request_id}/{policy}",
                         diagnostics=diagnostics,
@@ -687,7 +723,7 @@ def run_replay(
                         "feature_rows": None,
                         "mask_reason": "not_applicable",
                     }
-                    if policy in {"GCS+Rk", NO_METADATA_CONFIG_ID}:
+                    if policy in {"GCS+Rk", variant_id}:
                         if not isinstance(batch, FeatureBatch):
                             raise InputValidationError(
                                 "Готовая модель не сформировала базовые признаки"
@@ -713,9 +749,15 @@ def run_replay(
                     rows.append(
                         ReplayRecord(sid, policy, answer, canonical_json_bytes(saved).decode())
                     )
+                    calculation_seconds[policy] += time.perf_counter() - calculation_tick
+                write_tick = time.perf_counter()
                 writer.append(sid, rows)
+                write_seconds += time.perf_counter() - write_tick
                 processed += 1
                 check_budget()
+            write_tick = time.perf_counter()
+        write_seconds += time.perf_counter() - write_tick
+        full_seconds = time.perf_counter() - recommendation_started
         if processed != total_requests:
             raise InputValidationError("Число ответов не соответствует входу")
         stage = "evaluation"
@@ -731,6 +773,7 @@ def run_replay(
             check_budget,
             selected_ids=selected_ids if pilot_sessions is not None else None,
             d_admission=d_access_gate if period == "D" else None,
+            selection_admission=d_access_gate if period == "C_select" else None,
         )
         tables = {
             path: table_info(store._path(path), kind, period=period)
@@ -751,6 +794,22 @@ def run_replay(
             "elapsed_seconds": time.monotonic() - started,
             **_peak_memory(),
         }
+        if period == "C_select":
+            from coveo_recsys.evaluation.selection import select_candidate370
+
+            result["selection"] = select_candidate370(result)
+            result["full_recommendation_timing"] = {
+                policy: {
+                    "requests": total_requests,
+                    "calculation_seconds": calculation_seconds[policy],
+                }
+                for policy in policies
+            }
+            result["full_recommendation_timing"].update(
+                shared_serialization_and_write_seconds=write_seconds,
+                both_policies_pipeline_seconds=full_seconds,
+                note="Общая запись включена в полный путь; время записи не делится между моделями. Это пакетный расчёт, не задержка HTTP.",
+            )
         if before_publish is not None:
             before_publish()
         stage = "validation"

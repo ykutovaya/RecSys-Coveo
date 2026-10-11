@@ -13,6 +13,7 @@ from coveo_recsys.contracts.historical import RELATIONS
 from coveo_recsys.contracts.records import Branch, CandidateResult, FeatureBatch, RequestContext
 from coveo_recsys.contracts.retrieval import (
     BASE_CONFIG_ID,
+    NO_METADATA_CONFIG_ID,
     NO_METADATA_SOURCES,
     SOURCES,
     SUPPORTED_CONFIG_IDS,
@@ -33,7 +34,7 @@ def _columns(config_id: str = BASE_CONFIG_ID) -> list[tuple[str, str, str | None
     """Исполняемый набор столбцов, не интерпретатор формул из JSON."""
     if config_id not in SUPPORTED_CONFIG_IDS:
         raise InputValidationError("Неизвестный профиль признаков")
-    with_metadata = config_id == BASE_CONFIG_ID
+    with_metadata = config_id != NO_METADATA_CONFIG_ID
     result: list[tuple[str, str, str | None, str]] = []
 
     def add(name: str, dtype: str = "float64", *, masked: bool = False, log: bool = False) -> None:
@@ -89,7 +90,7 @@ class FeatureEngine:
         validate_retrieval_profile(index.config_id, config)
         self.index, self.config = index, config
         self._columns = _columns(index.config_id)
-        self._with_metadata = index.config_id == BASE_CONFIG_ID
+        self._with_metadata = index.config_id != NO_METADATA_CONFIG_ID
         self._sources = SOURCES if self._with_metadata else NO_METADATA_SOURCES
         self._semantics = schema.get("event_semantics")
         columns = schema.get("columns")

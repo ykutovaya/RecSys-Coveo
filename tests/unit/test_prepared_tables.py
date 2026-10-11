@@ -1,4 +1,5 @@
 import os
+import sys
 
 import pyarrow.parquet as pq
 import pytest
@@ -225,7 +226,9 @@ def test_writer_rejects_symlink_before_creating_files(tmp_path, writer, position
             target if position == "file" else outside, target_is_directory=position != "file"
         )
     except OSError as exc:
-        pytest.skip(f"Создание символьных ссылок недоступно: {exc}")
+        if sys.platform == "win32" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("windows_symlink_unavailable: WinError 1314")
+        raise
     with pytest.raises(InputValidationError):
         if writer == "table":
             with TableWriter(path, SessionRecord) as table:

@@ -18,15 +18,17 @@ from coveo_recsys.artifacts import (
 from coveo_recsys.config import validate_feature_schema
 from coveo_recsys.config.recipes import get_ranker_recipe
 from coveo_recsys.contracts import InputValidationError, require_int64
-from coveo_recsys.contracts.preparation import PreparedRequest
+from coveo_recsys.contracts.preparation import PreparationPlan, PreparedRequest
 from coveo_recsys.contracts.records import CandidateResult, FeatureBatch
 from coveo_recsys.contracts.retrieval import (
     NO_METADATA_CONFIG_ID,
     RetrievalConfig,
     validate_retrieval_profile,
 )
+from coveo_recsys.contracts.serialization import from_json
 from coveo_recsys.data.access import DatasetAccess
 from coveo_recsys.data.metadata import open_metadata_source
+from coveo_recsys.data.periods import session_key
 from coveo_recsys.data.prepared import TableWriter, read_report, table_info, verify_tables
 from coveo_recsys.features import FeatureEngine
 from coveo_recsys.historical.load import PACKAGE_PATH, load_historical
@@ -71,7 +73,7 @@ def run_features(
     if (
         not isinstance(settings, dict)
         or not required <= set(settings)
-        or set(settings) - required - {"metadata_path", "admission"}
+        or set(settings) - required - {"metadata_path", "admission", "pilot_requests"}
         or not run_id
     ):
         raise InputValidationError("Неверные настройки признаков")
@@ -130,6 +132,21 @@ def run_features(
         )
 
     manifest_hash = admission()
+    pilot_requests = settings.get("pilot_requests")
+    selected = None
+    if pilot_requests is not None:
+        total = prepared["tables"]["datasets/B/prefixes.parquet"]["rows"]
+        if not 0 < require_int64(pilot_requests, nonnegative=True) <= total:
+            raise InputValidationError("Размер пилота вне подготовленного B")
+        plan = from_json(prepared["plan_json"].encode(), PreparationPlan)
+        selected = set(
+            sorted(prepared["selection"]["B"], key=lambda sid: session_key(sid, plan.seed))[
+                :pilot_requests
+            ]
+        )
+        if len(selected) != pilot_requests:
+            raise InputValidationError("Недостаточно выбранных ID для пилота")
+    completion_status = "completed" if selected is None else "pilot_completed"
     package = load_historical(historical_store)
     catalog_hash = historical_store.describe("historical/catalog.parquet").sha256
     store = LocalArtifactStore(destination)
@@ -150,6 +167,7 @@ def run_features(
         "feature_schema_file_sha256": sha256_bytes(schema_bytes),
         "configuration": asdict(config),
         "manifest_sha256": manifest_hash,
+        **({"pilot_requests": pilot_requests} if selected is not None else {}),
     }
     identity_bytes = canonical_json_bytes(identity)
     identity = strict_json_loads(identity_bytes)
@@ -188,7 +206,7 @@ def run_features(
     if (destination / REPORT).exists():
         result = strict_json_loads(store._path(REPORT).read_bytes())
         if (
-            result.get("status") != "completed"
+            result.get("status") != completion_status
             or canonical_json_bytes(result.get("identity")) != identity_bytes
             or set(result.get("tables", {})) != set(TABLES)
             or result.get("feature_schema") != schema
@@ -297,6 +315,7 @@ def run_features(
     processed = 0
     check_budget()
     total_rows = 0
+    calculation_seconds = 0.0
     with (
         TableWriter(
             destination / "features/candidates.parquet",
@@ -315,6 +334,10 @@ def run_features(
         for sid, items in access.read(
             "datasets/B/prefixes.parquet", PreparedRequest, purpose="prefix"
         ):
+            if selected is not None and sid not in selected:
+                check_budget()
+                continue
+            calculation_started = time.perf_counter()
             main, reserve, features = [], [], []
             for item in items:
                 context = bind_context(item, index)
@@ -329,6 +352,11 @@ def run_features(
             feature_writer.append(sid, features)
             processed += len(items)
             check_budget()
+            calculation_seconds += time.perf_counter() - calculation_started
+        calculation_started = time.perf_counter()
+    calculation_seconds += time.perf_counter() - calculation_started
+    if processed != (pilot_requests if selected is not None else total_requests):
+        raise InputValidationError("Число рассчитанных запросов не соответствует плану")
     stage = "validation"
     check_budget()
     tables = {}
@@ -336,15 +364,16 @@ def run_features(
         tables[path] = table_info(destination / path, kind, period="B")
         check_budget()
     result = {
-        "status": "completed",
+        "status": completion_status,
         "identity": identity,
         "feature_schema": schema,
-        "requests": requests,
+        "requests": processed,
         "candidate_rows": total_rows,
         "tables": tables,
         "reads": audit,
         "limits": limits,
         "elapsed_seconds": time.monotonic() - started,
+        "calculation_seconds_including_write": calculation_seconds,
         **_peak_memory(),
     }
     if before_publish is not None:

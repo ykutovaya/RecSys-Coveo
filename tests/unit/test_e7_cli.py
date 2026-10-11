@@ -25,6 +25,16 @@ def test_evaluate_calls_shared_runner_only_for_d(monkeypatch):
     assert kwargs == {"period": "D"}
 
 
+@pytest.mark.parametrize("status,code", [("passed", 0), ("failed", 1), ("insufficient", 1)])
+def test_select_calls_shared_runner_and_stops_on_unusable_result(monkeypatch, status, code):
+    def run(*args, **kwargs):
+        assert kwargs == {"period": "C_select"}
+        return {"status": "completed", "selection": {"status": status}}
+
+    monkeypatch.setattr("coveo_recsys.cli.replay.run_replay", run)
+    assert main(["select", "--config", "c.json", "--run-dir", "runs/c", "--run-id", "c"]) == code
+
+
 @pytest.mark.parametrize("step", ["features", "train"])
 def test_metadata_command_calls_existing_b_stage(monkeypatch, step):
     calls = []

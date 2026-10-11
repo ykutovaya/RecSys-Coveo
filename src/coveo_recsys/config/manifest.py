@@ -23,7 +23,11 @@ from coveo_recsys.artifacts import (
     strict_json_loads,
 )
 from coveo_recsys.contracts.common import Stage, ValidationIssue, ValidationResult
-from coveo_recsys.contracts.retrieval import NO_METADATA_CONFIG_ID, SUPPORTED_CONFIG_IDS
+from coveo_recsys.contracts.retrieval import (
+    METADATA370_CONFIG_ID,
+    NO_METADATA_CONFIG_ID,
+    SUPPORTED_CONFIG_IDS,
+)
 
 from .evidence import validate_final_evaluation, validate_online_plan, validate_online_results
 from .recipes import resolved_recipe_issues
@@ -301,7 +305,10 @@ class _Validation:
         ):
             self.issue("verification", "test_protocol", "Требуется минимум 1000 случаев и seed=17")
         for group in ("task",):
-            if self.m[group] != self.template[group]:
+            expected_task = deepcopy(self.template[group])
+            if self.m["base_model"]["config_id"] == METADATA370_CONFIG_ID:
+                expected_task["candidate_limit"] = 370
+            if self.m[group] != expected_task:
                 self.issue(group, "task_changed", "Изменена нормативная постановка первого профиля")
         mutable = {
             "calibration": set(),
@@ -369,6 +376,9 @@ class _Validation:
                         )
         if self.m["base_model"]["config_id"] in SUPPORTED_CONFIG_IDS:
             expected_base = deepcopy(self.template["base_model"])
+            if self.m["base_model"]["config_id"] == METADATA370_CONFIG_ID:
+                expected_base["config_id"] = METADATA370_CONFIG_ID
+                expected_base["quotas"].update(description=80, image=60)
             if self.m["base_model"]["config_id"] == NO_METADATA_CONFIG_ID:
                 expected_base["config_id"] = NO_METADATA_CONFIG_ID
                 for source in ("description", "image", "search"):

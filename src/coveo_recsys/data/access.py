@@ -29,6 +29,7 @@ class DatasetAccess:
         scope: str = "synthetic",
         audit: Callable[[dict[str, Any]], None] | None = None,
         d_admission: Callable[[], str] | None = None,
+        selection_admission: Callable[[], str] | None = None,
     ) -> None:
         if scope not in {"synthetic", "actual"}:
             raise InputValidationError("Неизвестная область доступа")
@@ -38,6 +39,7 @@ class DatasetAccess:
         self.scope = scope
         self.audit = audit
         self.d_admission = d_admission
+        self.selection_admission = selection_admission
 
     def read(
         self, relative_path: str, kind: type[R], *, purpose: str
@@ -54,6 +56,8 @@ class DatasetAccess:
                 parts[1] in {"A_G", "B", "C_smoke"}
                 or parts[1] == "D"
                 and self.d_admission is not None
+                or parts[1] == "C_select"
+                and self.selection_admission is not None
             )
             and (purpose, parts[2], kind.__name__)
             in {
@@ -76,6 +80,9 @@ class DatasetAccess:
             if parts[1] == "D":
                 if self.d_admission is None or not self.d_admission():
                     raise InputValidationError("Нет допуска pre_D")
+            if parts[1] == "C_select":
+                if self.selection_admission is None or not self.selection_admission():
+                    raise InputValidationError("Нет допуска pre_selection")
             destination = self.root / relative_path
             if destination.resolve() != destination or any(
                 (self.root.joinpath(*parts[:i])).is_symlink() for i in range(1, len(parts) + 1)
@@ -116,6 +123,10 @@ class DatasetAccess:
             try:
                 if parts[1] == "D" and (self.d_admission is None or not self.d_admission()):
                     raise InputValidationError("Нет допуска pre_D")
+                if parts[1] == "C_select" and (
+                    self.selection_admission is None or not self.selection_admission()
+                ):
+                    raise InputValidationError("Нет допуска pre_selection")
                 yield from iter_sessions(
                     destination,
                     kind,

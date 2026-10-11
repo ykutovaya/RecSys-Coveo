@@ -105,6 +105,13 @@ def _parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--run-dir", type=Path, required=True)
     evaluate.add_argument("--run-id", required=True)
     evaluate.set_defaults(period="D")
+    select = commands.add_parser(
+        "select", help="Сравнение исходной модели и варианта 370 на C_select"
+    )
+    select.add_argument("--config", type=Path, required=True)
+    select.add_argument("--run-dir", type=Path, required=True)
+    select.add_argument("--run-id", required=True)
+    select.set_defaults(period="C_select")
     report = commands.add_parser("report", help="Отчёт по сохранённым результатам оценки")
     report.add_argument("--run", type=Path, required=True)
     serve = commands.add_parser("serve", help="Локальный сервис рекомендаций")
@@ -113,7 +120,6 @@ def _parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
     for name in (
-        "select",
         "load",
         "experiment",
     ):
@@ -164,6 +170,7 @@ def main(argv: list[str] | None = None) -> int:
         "train",
         "replay",
         "evaluate",
+        "select",
         "report",
         "serve",
         "sensitivity",
@@ -187,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
 
             _emit(read_report(args.run))
             return 0
-        if args.command in {"replay", "evaluate"}:
+        if args.command in {"replay", "evaluate", "select"}:
             from coveo_recsys.cli.replay import run_replay
 
             try:
@@ -198,6 +205,8 @@ def main(argv: list[str] | None = None) -> int:
                 _emit({"status": "failed", "reason": "interrupted"})
                 return 130
             _emit(result)
+            if args.command == "select" and result["selection"]["status"] != "passed":
+                return 1
             return 0
         if args.command == "train" or (metadata_mode and args.step == "train"):
             from contextlib import redirect_stdout

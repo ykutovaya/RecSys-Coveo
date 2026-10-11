@@ -76,7 +76,7 @@ class RetrievalIndex:
         self._rows: dict[str, ItemContent] = {}
         self._edges: dict[str, dict[str, dict[int, tuple[float, int]]]] = {}
         count = len(self.positions)
-        if config_id == BASE_CONFIG_ID:
+        if config_id != NO_METADATA_CONFIG_ID:
             content = package.content
             for modality in (content.description, content.image):
                 if (
@@ -123,7 +123,7 @@ class RetrievalIndex:
             or not np.isfinite(package.statistics.popularity).all()
         ):
             raise NumericError("Некорректная популярность")
-        if config_id == BASE_CONFIG_ID:
+        if config_id != NO_METADATA_CONFIG_ID:
             for sku, record in (observed or {}).items():
                 id_bytes(sku)
                 if sku != record.sku or sku in self.positions:
@@ -266,7 +266,7 @@ def score_request(
             for j, value in weighted.items():
                 values[relation][j] += value
     history_available = {}
-    modalities = ("description", "image") if index.config_id == BASE_CONFIG_ID else ()
+    modalities = ("description", "image") if index.config_id != NO_METADATA_CONFIG_ID else ()
     for name in modalities:
         modality = getattr(package.content, name)
         dimension = modality.vectors.shape[1]
@@ -289,7 +289,7 @@ def score_request(
         else:
             reasons[name] = "empty_history" if not history else "history_vector_unavailable"
     search_age = 0
-    search = context.prefix.search if index.config_id == BASE_CONFIG_ID else None
+    search = context.prefix.search if index.config_id != NO_METADATA_CONFIG_ID else None
     if index.config_id == NO_METADATA_CONFIG_ID:
         pass
     elif search is None:

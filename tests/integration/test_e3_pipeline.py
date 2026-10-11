@@ -128,7 +128,9 @@ def test_feature_progress_is_throttled_and_distinguishes_final_checks(
 
     settings, _, _ = e3_settings
     clock = [0.0]
-    monkeypatch.setattr(features, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(
+        features, "time", SimpleNamespace(monotonic=lambda: clock[0], perf_counter=lambda: clock[0])
+    )
     original_score = features.score_request
 
     def score(*args, **kwargs):

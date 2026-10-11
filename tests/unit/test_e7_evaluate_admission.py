@@ -123,7 +123,8 @@ def test_evaluate_refuses_missing_admission_before_touching_preparation(
     assert not (tmp_path / "result").exists()
 
 
-def test_d_preparation_requires_pre_d_even_for_small_test_inputs(tmp_path):
+@pytest.mark.parametrize("period,stage", [("D", "pre_D"), ("C_select", "pre_selection")])
+def test_d_preparation_requires_pre_d_even_for_small_test_inputs(tmp_path, period, stage):
     from coveo_recsys.cli.preparation import Preparation
 
     root = Path(__file__).resolve().parents[2]
@@ -132,15 +133,15 @@ def test_d_preparation_requires_pre_d_even_for_small_test_inputs(tmp_path):
     )
     plan = replace(
         original,
-        periods=tuple(replace(p, sample_size=int(p.name == "D")) for p in original.periods),
+        periods=tuple(replace(p, sample_size=int(p.name == period)) for p in original.periods),
     )
     path = tmp_path / "plan.json"
     path.write_bytes(to_json(plan))
     settings = tmp_path / "evaluation.json"
-    settings.write_bytes(canonical_json_bytes({"evaluation_plan": {"period": "D"}}))
+    settings.write_bytes(canonical_json_bytes({"evaluation_plan": {"period": period}}))
     runner = Preparation(LocalArtifactStore(tmp_path / "result"), root, "denied")
     # Исходников намеренно нет: отказ допуска обязан предшествовать их проверке.
-    with pytest.raises(InputValidationError, match="pre_D"):
+    with pytest.raises(InputValidationError, match=stage):
         runner.prepare(
             tmp_path / "absent-input",
             root / "configs/synthetic_csv.json",

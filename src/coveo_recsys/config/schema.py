@@ -9,7 +9,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 from coveo_recsys.artifacts import strict_json_loads
 from coveo_recsys.contracts.common import ValidationIssue
-from coveo_recsys.contracts.retrieval import NO_METADATA_CONFIG_ID
+from coveo_recsys.contracts.retrieval import METADATA370_CONFIG_ID, NO_METADATA_CONFIG_ID
 
 from .resources import load_schema, load_template, resource_bytes
 
@@ -61,6 +61,10 @@ def validate_feature_schema(value: Any) -> tuple[ValidationIssue, ...]:
     if issues:
         return tuple(issues)
     columns = value["columns"]
+    if value["config_id"] == METADATA370_CONFIG_ID:
+        fixed = strict_json_loads(resource_bytes("configs/feature_schema.json"))
+        if value["schema_version"] != fixed["schema_version"] or columns != fixed["columns"]:
+            issues.append(ValidationIssue("columns", "profile_schema", "Изменена схема 370"))
     if value["config_id"] == NO_METADATA_CONFIG_ID:
         fixed = strict_json_loads(resource_bytes("configs/feature_schema_no_metadata.json"))
         if value["schema_version"] != fixed["schema_version"] or columns != fixed["columns"]:

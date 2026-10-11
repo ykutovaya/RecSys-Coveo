@@ -7,11 +7,12 @@ from typing import Any, cast
 
 from .common import InputValidationError
 from .records import Record, RequestResult
-from .retrieval import NO_METADATA_CONFIG_ID
+from .retrieval import METADATA370_CONFIG_ID, NO_METADATA_CONFIG_ID
 from .training import SessionEvaluation
 
 POLICIES = ("GCS+Rk", "P", "R")
 FINAL_POLICIES = (*POLICIES, NO_METADATA_CONFIG_ID)
+SELECT_POLICIES = ("GCS+Rk", METADATA370_CONFIG_ID)
 
 
 def _diagnostic_json(payload: str) -> dict[str, Any]:
@@ -62,7 +63,7 @@ class ReplayRecord(Record, _ParsedDiagnostic):
 
     def __post_init__(self) -> None:
         Record.__post_init__(self)
-        if self.policy not in FINAL_POLICIES:
+        if self.policy not in (*FINAL_POLICIES, METADATA370_CONFIG_ID):
             raise InputValidationError("Незапланированная политика")
         object.__setattr__(self, "_parsed_json", _diagnostic_json(self.diagnostics_json))
 
@@ -76,6 +77,9 @@ class EvaluationRecord(Record, _ParsedDiagnostic):
 
     def __post_init__(self) -> None:
         Record.__post_init__(self)
-        if self.policy not in FINAL_POLICIES or self.evaluation.session_id != self.session_id:
+        if (
+            self.policy not in (*FINAL_POLICIES, METADATA370_CONFIG_ID)
+            or self.evaluation.session_id != self.session_id
+        ):
             raise InputValidationError("Несовместимая сессионная оценка")
         object.__setattr__(self, "_parsed_json", _diagnostic_json(self.details_json))

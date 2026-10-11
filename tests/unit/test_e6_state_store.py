@@ -1,4 +1,5 @@
 import os
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
@@ -155,8 +156,10 @@ def test_file_rejects_symlink(tmp_path):
     link = tmp_path / "link.json"
     try:
         link.symlink_to(actual)
-    except OSError:
-        pytest.skip("Windows не разрешил создать ссылку")
+    except OSError as exc:
+        if sys.platform == "win32" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("windows_symlink_unavailable: WinError 1314")
+        raise
     with pytest.raises(StateError, match="state_incompatible"):
         FileStateStore(link)
 

@@ -37,7 +37,7 @@ def test_old_model_producer_is_preserved_by_new_consumer(replay_settings, tmp_pa
     )
 
 
-@pytest.mark.parametrize("period", ["A_G", "A_N", "B", "C_select", "E"])
+@pytest.mark.parametrize("period", ["A_G", "A_N", "B", "E"])
 def test_closed_period_is_rejected_before_loading_inputs(tmp_path, period):
     from coveo_recsys.cli.replay import run_replay
 
