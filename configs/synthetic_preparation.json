@@ -1,0 +1,48 @@
+{
+  "contract_version": "3",
+  "type": "PreparationPlan",
+  "data": {
+    "scope": "synthetic",
+    "source_namespace": "synthetic",
+    "task": {
+      "horizon_ms": 86400000,
+      "gap_ms": 1800000,
+      "max_requests": 1,
+      "detail_history_limit": 20,
+      "block_history_limit": 20,
+      "query_dimension": 2,
+      "event_semantics": "set_v1",
+      "evaluation_protocol": "observed_purchases_v1"
+    },
+    "periods": [
+      {"name": "A_G", "start_ms": 0, "end_ms": 200000000, "sample_size": 3},
+      {"name": "A_N", "start_ms": 200000000, "end_ms": 400000000, "sample_size": 3},
+      {"name": "B", "start_ms": 400000000, "end_ms": 600000000, "sample_size": 3},
+      {"name": "C_smoke", "start_ms": 600000000, "end_ms": 800000000, "sample_size": 3},
+      {"name": "C_select", "start_ms": 800000000, "end_ms": 1000000000, "sample_size": 3},
+      {"name": "E", "start_ms": 1000000000, "end_ms": 1200000000, "sample_size": 3},
+      {"name": "D", "start_ms": 1200000000, "end_ms": 1400000000, "sample_size": 0}
+    ],
+    "coverage": {
+      "source_namespace": "synthetic",
+      "start_ms": 0,
+      "end_ms": 1400000001,
+      "gaps": [],
+      "evidence": "explicit synthetic fixture coverage, not inferred from CSV EOF",
+      "confirmed_at_ms": 1400000001
+    },
+    "seed": 17,
+    "chunk_size": 4096,
+    "chunk_bytes": 16777216,
+    "fan_in": 32,
+    "max_group_events": 100000,
+    "max_group_bytes": 16777216,
+    "max_session_blocks": 100000,
+    "max_session_bytes": 16777216,
+    "max_sessions": 100000,
+    "diagnostic_sessions": 0,
+    "max_seconds": 1800,
+    "max_memory_bytes": 536870912,
+    "max_temp_bytes": 268435456
+  }
+}

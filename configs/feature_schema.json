@@ -1,0 +1,1792 @@
+{
+  "schema_version": "1",
+  "config_id": "gcs_rk_v2_7",
+  "event_semantics": "set_v1",
+  "columns": [
+    {
+      "name": "origin_detail_detail",
+      "position": 0,
+      "dtype": "bool",
+      "formula": "eq:model-source-rank: membership(detail_detail)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "score_detail_detail",
+      "position": 1,
+      "dtype": "float64",
+      "formula": "eq:model-graph-score",
+      "mask": "score_detail_detail_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "score_detail_detail_mask",
+      "position": 2,
+      "dtype": "bool",
+      "formula": "availability(score_detail_detail)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "rank_detail_detail",
+      "position": 3,
+      "dtype": "float64",
+      "formula": "eq:model-source-rank: 1/(1+rank), rank starts at 1",
+      "mask": "rank_detail_detail_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "rank_detail_detail_mask",
+      "position": 4,
+      "dtype": "bool",
+      "formula": "availability(rank_detail_detail)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "origin_detail_add",
+      "position": 5,
+      "dtype": "bool",
+      "formula": "eq:model-source-rank: membership(detail_add)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "score_detail_add",
+      "position": 6,
+      "dtype": "float64",
+      "formula": "eq:model-graph-score",
+      "mask": "score_detail_add_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "score_detail_add_mask",
+      "position": 7,
+      "dtype": "bool",
+      "formula": "availability(score_detail_add)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "rank_detail_add",
+      "position": 8,
+      "dtype": "float64",
+      "formula": "eq:model-source-rank: 1/(1+rank), rank starts at 1",
+      "mask": "rank_detail_add_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "rank_detail_add_mask",
+      "position": 9,
+      "dtype": "bool",
+      "formula": "availability(rank_detail_add)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "origin_detail_purchase",
+      "position": 10,
+      "dtype": "bool",
+      "formula": "eq:model-source-rank: membership(detail_purchase)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "score_detail_purchase",
+      "position": 11,
+      "dtype": "float64",
+      "formula": "eq:model-graph-score",
+      "mask": "score_detail_purchase_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "score_detail_purchase_mask",
+      "position": 12,
+      "dtype": "bool",
+      "formula": "availability(score_detail_purchase)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "rank_detail_purchase",
+      "position": 13,
+      "dtype": "float64",
+      "formula": "eq:model-source-rank: 1/(1+rank), rank starts at 1",
+      "mask": "rank_detail_purchase_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "rank_detail_purchase_mask",
+      "position": 14,
+      "dtype": "bool",
+      "formula": "availability(rank_detail_purchase)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "origin_description",
+      "position": 15,
+      "dtype": "bool",
+      "formula": "eq:model-source-rank: membership(description)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "score_description",
+      "position": 16,
+      "dtype": "float64",
+      "formula": "eq:model-content-score",
+      "mask": "score_description_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "score_description_mask",
+      "position": 17,
+      "dtype": "bool",
+      "formula": "availability(score_description)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "rank_description",
+      "position": 18,
+      "dtype": "float64",
+      "formula": "eq:model-source-rank: 1/(1+rank), rank starts at 1",
+      "mask": "rank_description_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "rank_description_mask",
+      "position": 19,
+      "dtype": "bool",
+      "formula": "availability(rank_description)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "origin_image",
+      "position": 20,
+      "dtype": "bool",
+      "formula": "eq:model-source-rank: membership(image)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "score_image",
+      "position": 21,
+      "dtype": "float64",
+      "formula": "eq:model-content-score",
+      "mask": "score_image_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "score_image_mask",
+      "position": 22,
+      "dtype": "bool",
+      "formula": "availability(score_image)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "rank_image",
+      "position": 23,
+      "dtype": "float64",
+      "formula": "eq:model-source-rank: 1/(1+rank), rank starts at 1",
+      "mask": "rank_image_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "rank_image_mask",
+      "position": 24,
+      "dtype": "bool",
+      "formula": "availability(rank_image)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "origin_search",
+      "position": 25,
+      "dtype": "bool",
+      "formula": "eq:model-source-rank: membership(search)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "score_search",
+      "position": 26,
+      "dtype": "float64",
+      "formula": "eq:model-search-score",
+      "mask": "score_search_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "score_search_mask",
+      "position": 27,
+      "dtype": "bool",
+      "formula": "availability(score_search)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "rank_search",
+      "position": 28,
+      "dtype": "float64",
+      "formula": "eq:model-source-rank: 1/(1+rank), rank starts at 1",
+      "mask": "rank_search_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "rank_search_mask",
+      "position": 29,
+      "dtype": "bool",
+      "formula": "availability(rank_search)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "origin_recent",
+      "position": 30,
+      "dtype": "bool",
+      "formula": "eq:model-source-rank: membership(recent)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "score_recent",
+      "position": 31,
+      "dtype": "float64",
+      "formula": "-(t_q-last_view_ms)/1000",
+      "mask": "score_recent_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "score_recent_mask",
+      "position": 32,
+      "dtype": "bool",
+      "formula": "availability(score_recent)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "rank_recent",
+      "position": 33,
+      "dtype": "float64",
+      "formula": "eq:model-source-rank: 1/(1+rank), rank starts at 1",
+      "mask": "rank_recent_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "rank_recent_mask",
+      "position": 34,
+      "dtype": "bool",
+      "formula": "availability(rank_recent)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "origin_popularity",
+      "position": 35,
+      "dtype": "bool",
+      "formula": "eq:model-source-rank: membership(popularity)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "score_popularity",
+      "position": 36,
+      "dtype": "float64",
+      "formula": "eq:model-popularity",
+      "mask": "score_popularity_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "score_popularity_mask",
+      "position": 37,
+      "dtype": "bool",
+      "formula": "availability(score_popularity)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "rank_popularity",
+      "position": 38,
+      "dtype": "float64",
+      "formula": "eq:model-source-rank: 1/(1+rank), rank starts at 1",
+      "mask": "rank_popularity_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "rank_popularity_mask",
+      "position": 39,
+      "dtype": "bool",
+      "formula": "availability(rank_popularity)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "origin_fill",
+      "position": 40,
+      "dtype": "bool",
+      "formula": "eq:model-candidate-fill: membership(fill)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "last_detail_detail",
+      "position": 41,
+      "dtype": "float64",
+      "formula": "sec:model-features: max rho_j^detail_detail P_ji^detail_detail over full last detail group",
+      "mask": "last_detail_detail_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "last_detail_detail_mask",
+      "position": 42,
+      "dtype": "bool",
+      "formula": "availability(last_detail_detail)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "support_detail_detail",
+      "position": 43,
+      "dtype": "float64",
+      "formula": "support of max last_detail_detail edge; UTF-8 anchor tie",
+      "mask": "support_detail_detail_mask",
+      "transformation": "log1p",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "support_detail_detail_mask",
+      "position": 44,
+      "dtype": "bool",
+      "formula": "availability(support_detail_detail)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "last_detail_add",
+      "position": 45,
+      "dtype": "float64",
+      "formula": "sec:model-features: max rho_j^detail_add P_ji^detail_add over full last detail group",
+      "mask": "last_detail_add_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "last_detail_add_mask",
+      "position": 46,
+      "dtype": "bool",
+      "formula": "availability(last_detail_add)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "support_detail_add",
+      "position": 47,
+      "dtype": "float64",
+      "formula": "support of max last_detail_add edge; UTF-8 anchor tie",
+      "mask": "support_detail_add_mask",
+      "transformation": "log1p",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "support_detail_add_mask",
+      "position": 48,
+      "dtype": "bool",
+      "formula": "availability(support_detail_add)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "last_detail_purchase",
+      "position": 49,
+      "dtype": "float64",
+      "formula": "sec:model-features: max rho_j^detail_purchase P_ji^detail_purchase over full last detail group",
+      "mask": "last_detail_purchase_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "last_detail_purchase_mask",
+      "position": 50,
+      "dtype": "bool",
+      "formula": "availability(last_detail_purchase)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "support_detail_purchase",
+      "position": 51,
+      "dtype": "float64",
+      "formula": "support of max last_detail_purchase edge; UTF-8 anchor tie",
+      "mask": "support_detail_purchase_mask",
+      "transformation": "log1p",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "support_detail_purchase_mask",
+      "position": 52,
+      "dtype": "bool",
+      "formula": "availability(support_detail_purchase)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "last_description",
+      "position": 53,
+      "dtype": "float64",
+      "formula": "eq:model-last-group-mean: masked cosine mean, full group",
+      "mask": "last_description_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "last_description_mask",
+      "position": 54,
+      "dtype": "bool",
+      "formula": "availability(last_description)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "history_description_available",
+      "position": 55,
+      "dtype": "bool",
+      "formula": "eq:model-session-vector: history direction is available",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "item_description_available",
+      "position": 56,
+      "dtype": "bool",
+      "formula": "eq:model-vector-normalization: item direction is available",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "last_image",
+      "position": 57,
+      "dtype": "float64",
+      "formula": "eq:model-last-group-mean: masked cosine mean, full group",
+      "mask": "last_image_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "last_image_mask",
+      "position": 58,
+      "dtype": "bool",
+      "formula": "availability(last_image)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "history_image_available",
+      "position": 59,
+      "dtype": "bool",
+      "formula": "eq:model-session-vector: history direction is available",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "item_image_available",
+      "position": 60,
+      "dtype": "bool",
+      "formula": "eq:model-vector-normalization: item direction is available",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "search_age",
+      "position": 61,
+      "dtype": "float64",
+      "formula": "eq:model-search-features: (t_q-t_search)/1000 when valid",
+      "mask": "search_age_mask",
+      "transformation": "log1p",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "search_age_mask",
+      "position": 62,
+      "dtype": "bool",
+      "formula": "availability(search_age)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "detail_count",
+      "position": 63,
+      "dtype": "float64",
+      "formula": "eq:model-online-features: full-prefix detail count",
+      "mask": null,
+      "transformation": "log1p",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "detail_age",
+      "position": 64,
+      "dtype": "float64",
+      "formula": "eq:model-online-features: (t_q-last_detail_ms)/1000",
+      "mask": "detail_age_mask",
+      "transformation": "log1p",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "detail_age_mask",
+      "position": 65,
+      "dtype": "bool",
+      "formula": "availability(detail_age)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "cart_add",
+      "position": 66,
+      "dtype": "bool",
+      "formula": "sec:time: current observed cart state is add; mask=state!=unknown",
+      "mask": "cart_add_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "cart_add_mask",
+      "position": 67,
+      "dtype": "bool",
+      "formula": "availability(cart_add)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "cart_remove",
+      "position": 68,
+      "dtype": "bool",
+      "formula": "sec:time: current observed cart state is remove; mask=state!=unknown",
+      "mask": "cart_remove_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "cart_remove_mask",
+      "position": 69,
+      "dtype": "bool",
+      "formula": "availability(cart_remove)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "cart_age",
+      "position": 70,
+      "dtype": "float64",
+      "formula": "sec:time: (t_q-last_unambiguous_ms)/1000; missing iff last_unambiguous_ms is null",
+      "mask": "cart_age_mask",
+      "transformation": "log1p",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "cart_age_mask",
+      "position": 71,
+      "dtype": "bool",
+      "formula": "availability(cart_age)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "session_event_count",
+      "position": 72,
+      "dtype": "float64",
+      "formula": "sec:model-features: session_event_count from complete visible prefix",
+      "mask": null,
+      "transformation": "log1p",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "session_distinct_items",
+      "position": 73,
+      "dtype": "float64",
+      "formula": "sec:model-features: session_distinct_items from complete visible prefix",
+      "mask": null,
+      "transformation": "log1p",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "session_add_count",
+      "position": 74,
+      "dtype": "float64",
+      "formula": "sec:model-features: session_add_count from complete visible prefix",
+      "mask": null,
+      "transformation": "log1p",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "session_duration",
+      "position": 75,
+      "dtype": "float64",
+      "formula": "sec:model-features: (t_q-first_event_time_ms)/1000",
+      "mask": "session_duration_mask",
+      "transformation": "log1p",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "session_duration_mask",
+      "position": 76,
+      "dtype": "bool",
+      "formula": "availability(session_duration)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "session_has_search",
+      "position": 77,
+      "dtype": "bool",
+      "formula": "sec:model-features: visible search exists, even if unusable",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "category_similarity",
+      "position": 78,
+      "dtype": "float64",
+      "formula": "eq:model-category-similarity: maximum over full last group; '/' separates levels",
+      "mask": "category_similarity_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "category_similarity_mask",
+      "position": 79,
+      "dtype": "bool",
+      "formula": "availability(category_similarity)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "category_match",
+      "position": 80,
+      "dtype": "bool",
+      "formula": "sec:model-features: maximum exact category-path match over full last group",
+      "mask": "category_match_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "category_match_mask",
+      "position": 81,
+      "dtype": "bool",
+      "formula": "availability(category_match)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "price_bucket",
+      "position": 82,
+      "dtype": "float64",
+      "formula": "sec:model-content: ordinal group, not order price",
+      "mask": "price_bucket_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "price_bucket_mask",
+      "position": 83,
+      "dtype": "bool",
+      "formula": "availability(price_bucket)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "last_price_equal",
+      "position": 84,
+      "dtype": "float64",
+      "formula": "eq:model-last-group-mean: masked mean indicator(candidate_bucket=anchor_bucket), full last group",
+      "mask": "last_price_equal_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "last_price_equal_mask",
+      "position": 85,
+      "dtype": "bool",
+      "formula": "availability(last_price_equal)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "last_price_sign",
+      "position": 86,
+      "dtype": "float64",
+      "formula": "eq:model-last-group-mean: masked mean sign(candidate_bucket-anchor_bucket), full last group",
+      "mask": "last_price_sign_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "last_price_sign_mask",
+      "position": 87,
+      "dtype": "bool",
+      "formula": "availability(last_price_sign)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "last_price_absolute",
+      "position": 88,
+      "dtype": "float64",
+      "formula": "eq:model-last-group-mean: masked mean abs(candidate_bucket-anchor_bucket), full last group",
+      "mask": "last_price_absolute_mask",
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "zero_with_mask"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "last_price_absolute_mask",
+      "position": 89,
+      "dtype": "bool",
+      "formula": "availability(last_price_absolute)",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix",
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q; snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "historical_purchase_count",
+      "position": 90,
+      "dtype": "float64",
+      "formula": "sec:model-features: number of A_G sessions with registered item purchase",
+      "mask": null,
+      "transformation": "log1p",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "A_G"
+        ],
+        "available_at": "snapshot_time_ms < t_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "A_G"
+    },
+    {
+      "name": "cart_unknown",
+      "position": 91,
+      "dtype": "bool",
+      "formula": "sec:time: current cart state is unknown, including no observations",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "prefix"
+        ],
+        "available_at": "event_time <= t_q and available_time <= a_q",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "none"
+    },
+    {
+      "name": "category",
+      "position": 92,
+      "dtype": "category",
+      "formula": "sec:model-features: UTF-8 A_G dictionary code, unknown=0",
+      "mask": null,
+      "transformation": "identity",
+      "provenance": {
+        "entity": "request_item",
+        "sources": [
+          "A_G",
+          "provided_metadata"
+        ],
+        "available_at": "snapshot_time_ms < t_q; ass:static-content; static_availability=unknown",
+        "version": "e3_v1",
+        "missing_rule": "defined"
+      },
+      "fit_period": "A_G"
+    }
+  ]
+}

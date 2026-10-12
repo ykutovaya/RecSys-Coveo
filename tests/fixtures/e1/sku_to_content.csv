@@ -1,0 +1,3 @@
+sku,description_vector,image_vector,category,price_bucket
+A,"[1,0]","[1,0,0]",a,low
+B,"[0,1]","[0,1,0]",b,high

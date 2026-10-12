@@ -1,0 +1,67 @@
+{
+  "package": {
+    "format_version": "serving_package_v1",
+    "profile": "local_checksum_only",
+    "published_at_ms": 1790545028833,
+    "historical": {
+      "path": "runs/coveo-historical-ag50000-v1",
+      "package_sha256": "4a6cfd61499710944bbea69f7e55cf27396081a7ed42b7f4cc526ffec935a00c"
+    },
+    "model": {
+      "path": "runs/coveo-b50000-ranker-v2",
+      "report_sha256": "34fcd5d4116342377c393d1671cce3176610f24e38304039aabf9ffa7eeb2902"
+    },
+    "training_features": {
+      "path": "runs/coveo-b50000-features-v2",
+      "report_sha256": "a0bca143b9021881f5bb22833c9677db4972093137fe24da2bca03342a2737f3"
+    },
+    "feature_schema": {
+      "path": "configs/feature_schema.json",
+      "sha256": "936e2d91ab2232ba53d0db0e5951f56931217711e4d89c82ef2c59821864b28e"
+    },
+    "retrieval": {
+      "block_size": 1024,
+      "history_limit": 20,
+      "max_candidates": 300,
+      "quotas": [50, 50, 50, 40, 30, 50, 20, 10],
+      "search_max_age_ms": 600000,
+      "tau_history_ms": 300000.0,
+      "vector_epsilon": 1e-12
+    },
+    "metadata": {
+      "path": "data/01_raw/sku_to_content.csv",
+      "profile_path": "configs/coveo_supply_v1.json",
+      "sha256": "f2cad127bb88efddc575e9caabbb5906355696de8544a29c767b705e53134746",
+      "profile_sha256": "f9f68401de9c7b0b32218fe4d75a0773553bfcec995bd2ec56d657f2dbbb9f04"
+    },
+    "templates": {
+      "version": "1",
+      "sha256": "6d9891586be688140e238656efb916f3cd4624dc91faad07021e936f140c2f8b"
+    },
+    "limits": {
+      "max_metadata_rows": 100000,
+      "max_metadata_bytes": 104857600,
+      "max_memory_bytes": 2147483648,
+      "max_seconds": 180
+    }
+  },
+  "task": {
+    "horizon_ms": 86400000,
+    "gap_ms": 1800000,
+    "max_requests": 1,
+    "detail_history_limit": 20,
+    "block_history_limit": 20,
+    "query_dimension": 50,
+    "event_semantics": "set_v1",
+    "evaluation_protocol": "observed_purchases_v1"
+  },
+  "owners": {
+    "COVEO_LOCAL_TOKEN": "local-demo"
+  },
+  "calendar_start_ms": 1790467200000,
+  "calendar_end_ms": 1798761600000,
+  "timeout_ms": 1000,
+  "reserve_ms": 100,
+  "state_adapter": "memory",
+  "workers": 4
+}

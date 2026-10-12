@@ -1,0 +1,561 @@
+{
+  "manifest_version": "2.10",
+  "evaluation_protocol": "observed_purchases_v1",
+  "status": "template_not_runnable",
+  "scope": "offline_first_run",
+  "freeze": {
+    "plan_references": {
+      "before_C_select": null,
+      "before_D": null,
+      "before_AB": null
+    }
+  },
+  "dataset": {
+    "version": null,
+    "files": [
+      {
+        "name": "browsing_train.csv",
+        "sha256": null
+      },
+      {
+        "name": "search_train.csv",
+        "sha256": null
+      },
+      {
+        "name": "sku_to_content.csv",
+        "sha256": null
+      }
+    ],
+    "schema_sha256": null,
+    "vector_dimensions": {
+      "description": null,
+      "image": null,
+      "query": null
+    },
+    "timezone": "UTC",
+    "timestamp_unit": "integer_milliseconds",
+    "coverage_start_utc": null,
+    "coverage_end_utc": null,
+    "telemetry_gaps": null,
+    "telemetry_completeness": "unknown",
+    "event_semantics": "set_v1",
+    "duplicate_sensitivity": "multiset_v1",
+    "availability_mode": "a_equals_t",
+    "session_sampling": {
+      "method": "sha256_seed_and_session_id_utf8_length_prefixed",
+      "seed": 17,
+      "session_count_by_period": null
+    },
+    "search_payload_policy": "distinct_valid_query_vectors_before_canonicalization_v1",
+    "search_canonicalization": {
+      "keep_distinct_payloads_and_multiplicities": true,
+      "compare_before_normalization": true,
+      "signed_zeros_equal": true,
+      "invalid_or_missing_latest_payload_disables_context": true,
+      "ignored_fields": [
+        "clicked_skus_hash",
+        "product_skus_hash"
+      ]
+    }
+  },
+  "periods": {
+    "interval_convention": "left_closed_right_open",
+    "period_A_G": {
+      "start_utc": null,
+      "end_utc": null
+    },
+    "period_A_N": {
+      "start_utc": null,
+      "end_utc": null
+    },
+    "period_B": {
+      "start_utc": null,
+      "end_utc": null
+    },
+    "period_C_smoke": {
+      "start_utc": null,
+      "end_utc": null
+    },
+    "period_C_select": {
+      "start_utc": null,
+      "end_utc": null
+    },
+    "period_E": {
+      "start_utc": null,
+      "end_utc": null
+    },
+    "period_D": {
+      "start_utc": null,
+      "end_utc": null
+    }
+  },
+  "reproducibility": {
+    "code_commit_or_archive_sha256": null,
+    "dependency_lockfile_sha256": null,
+    "feature_schema_sha256": null,
+    "manifest_schema_sha256": null,
+    "manifest_validator_sha256": null,
+    "ranker_callback_sha256": null,
+    "resolved_library_defaults_sha256": null,
+    "platform_and_compiler": null,
+    "random_generators_and_versions": null,
+    "seed": 17,
+    "baseline_dtype": "float64",
+    "neural_dtype": "float32"
+  },
+  "task": {
+    "estimand": "first_request_hit_at_20_among_recorded_purchase_sessions",
+    "eligibility_rule": "first_valid_detail_block_without_observed_purchase",
+    "target_rule": "distinct_registered_purchase_skus_in_same_session_after_first_request_until_min_horizon_last_recorded_event",
+    "evaluation_cohort": "sessions_with_nonempty_registered_target",
+    "empty_target_outcome": "unknown",
+    "reserved_periods": ["E"],
+    "horizon_seconds": 86400,
+    "inactivity_seconds": 1800,
+    "max_requests_per_session": 1,
+    "stop_requests_at_first_purchase": true,
+    "slate_size": 20,
+    "candidate_limit": 300,
+    "catalog_rule": "observed_in_A_G",
+    "candidate_accounting": "selected_branch_v1"
+  },
+  "base_model": {
+    "config_id": "gcs_rk_v2_7",
+    "graph_max_degree": 100,
+    "graph_max_group_distance": 10,
+    "graph_window_seconds": 1800,
+    "graph_decay_seconds": 600,
+    "graph_min_sessions": 3,
+    "graph_row_regularizer": 10,
+    "history_max_details": 20,
+    "stored_history_max_blocks": 20,
+    "history_decay_seconds": 300,
+    "search_expiry_seconds": 600,
+    "popularity_smoothing": 1,
+    "vector_epsilon": 1e-12,
+    "score_epsilon": 1e-8,
+    "search_mode": "exact",
+    "quotas": {
+      "graph_detail_detail": 50,
+      "graph_detail_add": 50,
+      "graph_detail_purchase": 50,
+      "description": 40,
+      "image": 30,
+      "search": 50,
+      "recent": 20,
+      "popularity": 10
+    },
+    "fill": "popularity_to_candidate_limit",
+    "fallback": "recent_time_desc_then_id_then_popularity",
+    "diversity_penalty": 0,
+    "historical_purchase_feature": {
+      "enabled": false,
+      "reason": "telemetry_completeness_unknown"
+    }
+  },
+  "ranker": {
+    "library": "lightgbm",
+    "version": "4.6.0",
+    "api": "lightgbm.train",
+    "objective_callable": "session_lambdas_v1",
+    "formula_contract": "sec:model-ranker-implementation",
+    "resolved_parameters": null,
+    "num_boost_round": 200,
+    "record_actual_tree_count": true,
+    "learning_rate": 0.05,
+    "num_leaves": 31,
+    "max_depth": 8,
+    "lambda_l2": 1,
+    "min_gain_to_split": 0,
+    "min_data_in_leaf": 100,
+    "min_sum_hessian_in_leaf": 0.001,
+    "rank_depth": 20,
+    "pair_sigmoid_scale": 1,
+    "pair_weights_applied_in_callback_once": true,
+    "dataset_weight_mode": "none",
+    "callback_accumulation_dtype": "float64",
+    "callback_output_dtype": "float32",
+    "native_lambdarank_controls_used": false,
+    "cat_smooth": 1,
+    "cat_l2": 0
+  },
+  "calibration": {
+    "enabled": false,
+    "reason": "not_used_in_observed_purchases_v1"
+  },
+  "selection": {
+    "development_period": "period_C_smoke",
+    "selection_period": "period_C_select",
+    "registered_configurations": null,
+    "primary_comparison": null,
+    "metadata_sensitivity": "graph_recent_popularity_no_provided_metadata",
+    "tie_break": [
+      "max_session_hit_count",
+      "keep_control"
+    ]
+  },
+  "inference": {
+    "primary_interval": "calendar_moving_block_bootstrap",
+    "alpha": 0.05,
+    "bootstrap_repetitions": 2000,
+    "bootstrap_seed": 17,
+    "quantile_method": "nearest_rank_x_ceil_p_n",
+    "calendar_anchor_utc": null,
+    "calendar_support": "admissible_start_window_excluding_H_plus_g_tail",
+    "calendar_cell_seconds": null,
+    "block_cells": null,
+    "sensitivity_block_cells": null,
+    "minimum_effective_blocks": 20,
+    "minimum_nonempty_disjoint_blocks": 20,
+    "planned_cells": null,
+    "half_width_fraction": null,
+    "single_policy_half_width_fraction": null,
+    "precision_unit": "fraction",
+    "dependence_multiplier": null,
+    "pilot_provenance": null,
+    "dependence_assumptions": {
+      "paired_hit": null,
+      "single_policy_hit": null
+    },
+    "minimum_category_sessions": 100,
+    "minimum_category_blocks": 20,
+    "minimum_supported_categories": 2,
+    "degenerate_interval_status": "insufficient",
+    "single_policy_interval": "calendar_moving_block_bootstrap_of_session_hit",
+    "structural_identity_policy": "separate_algebraic_assertion_not_empirical_precision",
+    "primary_estimate_type": "single_policy",
+    "primary_policy_config_id": "gcs_rk_v2_7",
+    "planned_outcome_variance": null
+  },
+  "serving": {
+    "cpu_virtual_cores": 8,
+    "ram_gib": 32,
+    "maximum_processes_peak_ram_gib": 28,
+    "gpu": false,
+    "cpu_model_and_threads": null,
+    "offered_requests_per_second": 100,
+    "generator_max_outstanding": 32,
+    "server_max_active": 16,
+    "server_max_queued": 16,
+    "queue_timeout_ms": 10,
+    "warmup_seconds": 300,
+    "measurement_seconds": 1800,
+    "repetitions": 3,
+    "p95_ms": 50,
+    "p99_ms": 100,
+    "deadline_ms": 120,
+    "max_error_fraction": 0.001,
+    "max_fallback_fraction": 0.01,
+    "feature_parity_epsilon": 1e-8,
+    "feature_parity_relative_tolerance": 0.000001,
+    "replay_max_events": 1000,
+    "replay_max_bytes": 1048576,
+    "cas_retries": 1,
+    "rollback_rto_seconds": 60,
+    "assignment_and_outcome_rpo": 0,
+    "latency_origin": "first_request_byte",
+    "receive_and_queue_budget_ms": 10,
+    "ram_accounting": "peak_sum_pss",
+    "ram_meter_sampling_interval_ms": null,
+    "ram_process_scope": null
+  },
+  "operations": {
+    "limits_contract": "sec:ops-security",
+    "max_request_bytes": 1048576,
+    "max_sku_utf8_bytes": 256,
+    "max_events_per_block": 100,
+    "max_events_per_session": 1000,
+    "logical_event_limit_unit": "after_event_id_dedup_and_registered_canonicalization",
+    "max_transport_events_per_packet_and_atomic_block": 100,
+    "max_search_list_items": 1000,
+    "rate_limit_unit": "raw_transport_events_including_retries",
+    "session_event_rate_per_second": 10,
+    "session_event_burst": 100,
+    "production_tenant_limits": null,
+    "production_sku_contribution_limits": null,
+    "state_inactivity_ttl_seconds": 86400,
+    "retry_horizon_seconds": 86400,
+    "late_event_limit_seconds": 1800,
+    "event_time_validation_contract": "sec:ops-event-time-validation",
+    "event_time_encoding": "signed_int64_epoch_milliseconds_utc",
+    "production_event_time_range_utc": null,
+    "future_event_limit_seconds": 0,
+    "future_event_policy": "quarantine_before_history_update_no_waiting_buffer",
+    "future_event_reason": "timestamp_future",
+    "future_event_updates_history_or_last_time": false,
+    "rejected_new_trusted_block_marks_incomplete": true,
+    "verified_retry_precedes_time_window_checks": true,
+    "replay_retention_seconds": 172800,
+    "debug_retention_days": 7,
+    "outcomes_delete_days_after_analysis_close": 30,
+    "analysis_close_utc": null,
+    "artifact_authentication": "local_checksum_only",
+    "production_signature_algorithm": "Ed25519",
+    "trusted_production_key_ids": null,
+    "monitoring_contract": "sec:ops-drift-rule",
+    "monitoring_resolved_configuration": null,
+    "responsible_role": null,
+    "transport_block_protocol": "sealed_block_v1",
+    "block_owner_rule": "single_registered_aggregator_per_session_namespace",
+    "production_block_aggregator_id": null,
+    "accept_block_fragments": false,
+    "accept_closed_block_revisions": false,
+    "required_block_fields": [
+      "source_namespace",
+      "session_id",
+      "event_time_ms",
+      "block_id",
+      "event_count",
+      "event_ids",
+      "events",
+      "payload_sha256",
+      "closed"
+    ],
+    "known_retry_mutates_completeness": false,
+    "external_vector_policy": "mask_zero_with_reason",
+    "required_input_error": "invalid_input",
+    "internal_nonfinite_policy": "training_failed_or_serving_fallback",
+    "snapshot_publication_cutoff": "strictly_before_t_q",
+    "replay_mode": "ideal_deterministic",
+    "execution_trace_schema": "execution_trace_v1",
+    "execution_trace_manifest_sha256": null,
+    "consecutive_service_errors": 20,
+    "readiness_probe_interval_seconds": 5,
+    "readiness_probe_deadline_ms": 120,
+    "consecutive_readiness_failures": 3,
+    "invalid_or_untrusted_input_triggers_global_rollback": false,
+    "min_transport_events_per_block": 1,
+    "min_rate_limit_cost_per_attempt": 1,
+    "production_owner_registry_sha256": null,
+    "payload_digest_rule": "sha256_over_exact_immutable_payload_bytes_computed_by_service",
+    "availability_time_rule": "block_decision_time_for_accepted_events_only",
+    "request_cutoff_rule": "after_atomic_acceptance_when_ingestion_and_request_are_combined",
+    "event_id_list_rule": "event_ids[k] == events[k].event_id",
+    "event_ids_unique_within_block": true,
+    "block_decision_time_rule": "service_atomic_decision_time_recorded_for_acceptance_and_quarantine"
+  },
+  "neural_extension": {
+    "enabled": false,
+    "resolved_configuration": null,
+    "contrastive_sampler": "label_filtered_v1",
+    "contrastive_sensitivity_sampler": "label_free_v1",
+    "training_contract": "sec:modern-training-recipe",
+    "log_probability_contract": "sec:modern-log-probabilities",
+    "training_defaults": {
+      "profile": "neural_training_v2",
+      "numpy_version": "2.1.3",
+      "pytorch_version": "2.6.0",
+      "device": "cpu",
+      "dtype": "float32",
+      "num_threads": 1,
+      "num_interop_threads": 1,
+      "deterministic_algorithms": true,
+      "optimizer": {
+        "name": "Adam",
+        "learning_rate": 0.001,
+        "betas": [
+          0.9,
+          0.999
+        ],
+        "epsilon": 1e-8,
+        "weight_decay": 0,
+        "amsgrad": false,
+        "foreach": false,
+        "fused": false,
+        "maximize": false,
+        "capturable": false,
+        "differentiable": false
+      },
+      "gradient_clip_global_l2": 5,
+      "gradient_norm_accumulation_dtype": "float64",
+      "scheduler": null,
+      "mixed_precision": false,
+      "gradient_accumulation_steps": 1,
+      "early_stopping": false,
+      "random_generator": "numpy.random.Generator(PCG64)",
+      "random_streams": [
+        "initialization",
+        "epoch_order",
+        "branch_masks",
+        "sid_noise",
+        "negative_sampling",
+        "search_dropout",
+        "sid_random_codes"
+      ],
+      "random_seed_rule": "17 + 100 * module_index + stream_index",
+      "module_indices": {
+        "neural": 0,
+        "sequence": 1,
+        "sid": 2
+      },
+      "stream_indices": {
+        "initialization": 0,
+        "epoch_order": 1,
+        "branch_masks": 2,
+        "sid_noise": 3,
+        "negative_sampling": 4,
+        "search_dropout": 5,
+        "sid_random_codes": 6
+      },
+      "optional_randomness_contract": "sec:modern-training-recipe",
+      "negative_sampling_call_order": "batch_request_order_then_buy_then_next",
+      "negative_sampling_method": "precomputed_cdf_rejection_v1",
+      "negative_sampling_cdf_dtype": "float64",
+      "negative_sampling_searchsorted_side": "right",
+      "negative_sampling_probability_dtype": "float64",
+      "negative_sampling_support_check": "cdf_fp64_grid53_v1",
+      "negative_sampling_support_required_by_stage": "preflight",
+      "negative_sampling_probability_rtol": 0.000001,
+      "negative_sampling_allowed_mass": "direct_kahan_fp64_utf8",
+      "negative_sampling_precision_failure": "negative_sampling_precision_unsupported",
+      "search_dropout_draw_rule": "one_random_per_batch_request_when_p_S_positive_including_missing_search",
+      "sid_random_codes_method": "choice_capacity_size_catalog_without_replacement_shuffle_true",
+      "sid_random_codes_capacity_rule": "catalog_size<=capacity<=2^63-1",
+      "disabled_random_consumers_advance_stream": false,
+      "sequence_layer_norm_epsilon": 0.00001,
+      "initialization_contract": "sec:modern-training-recipe",
+      "batch_size": 64,
+      "epochs": 3,
+      "supervised_batch_normalization": "epoch_batch_count_times_global_weighted_contribution"
+    }
+  },
+  "sid_extension": {
+    "enabled": false,
+    "resolved_configuration": null,
+    "training_contract": "sec:modern-training-recipe",
+    "training_defaults": {
+      "profile": "neural_training_v2",
+      "module_index": 2,
+      "optimizer_defaults_from": "neural_extension.training_defaults.optimizer",
+      "warmup_item_batch_size": 256,
+      "warmup_epochs": 1,
+      "joint_query_batch_size": 64,
+      "joint_epochs": 3,
+      "decoder_epochs": 2,
+      "reset_optimizer_between_phases": true,
+      "uniform_noise_epsilon": 1e-7,
+      "final_trainable_parameters": "decoder_only",
+      "trainable_by_phase": {
+        "warmup": [
+          "A_l",
+          "b_l",
+          "c_l_b",
+          "D_text",
+          "D_image"
+        ],
+        "joint": "all_sid_parameters",
+        "decoder_only": [
+          "U",
+          "b0",
+          "O_l",
+          "o_l",
+          "F",
+          "T",
+          "p_l"
+        ]
+      },
+      "pretrained_neural_always_frozen": true
+    }
+  },
+  "ann_extension": {
+    "enabled": false,
+    "resolved_configuration": null,
+    "score_contract": "sec:ops-ann-contract",
+    "regret_score": "unscaled_bounded_dot_v1",
+    "regret_score_formula_references": null,
+    "maximum_empty_approximate_with_nonempty_exact": 0,
+    "maximum_hit_drop_fraction": null
+  },
+  "online_experiment": {
+    "enabled": false,
+    "protocol_sha256": null,
+    "assignment_unit": null,
+    "estimand": null,
+    "stable_key_primary_cohort": "first_eligible_session_per_new_key_before_assignment",
+    "stable_key_primary_outcome": "purchase_in_entry_session_within_H",
+    "business_threshold": null,
+    "sample_size_and_horizon": null,
+    "srm_plan": null,
+    "srm_contract": "sec:eval-srm-stop",
+    "srm_defaults": {
+      "alpha": 0.001,
+      "assignment_mechanism": "independent_bernoulli",
+      "expected_treatment_probability": 0.5,
+      "stratum_membership_rule": "pre_assignment_fields_only_frozen_at_assignment",
+      "post_assignment_strata_allowed": false,
+      "binomial_null_conditioning": "cohort_or_stratum_membership_and_size_at_each_scheduled_check",
+      "membership_uses_assignment_or_exposure_history": false,
+      "adaptive_membership_requires_design_specific_test": true,
+      "nonstandard_design_requires_familywise_error_control": true,
+      "required_plan_fields": [
+        "assignment_mechanism",
+        "cohort_membership_rule",
+        "conditional_null_justification",
+        "test_method",
+        "familywise_error_control_justification",
+        "schedule_utc",
+        "number_of_checks",
+        "alpha",
+        "expected_treatment_probability",
+        "strata"
+      ],
+      "required_stratum_fields": [
+        "stratum_id",
+        "pre_assignment_fields",
+        "membership_rule_version",
+        "membership_rule_sha256",
+        "conditional_null_justification",
+        "missing_value_policy",
+        "expected_treatment_probability"
+      ]
+    },
+    "guardrail_margins": null,
+    "stopping_rule": "fixed_horizon_safety_stop_descriptive_only"
+  },
+  "verification": {
+    "contract": "app:tests-normative",
+    "property_case_count": 1000,
+    "seed": 17,
+    "data_status": "not_run",
+    "math_status": "not_run",
+    "calibration_status": "not_used",
+    "offline_status": "not_run",
+    "serve_status": "not_run",
+    "business_status": "not_observed",
+    "results_by_stage": {
+      "preflight": null,
+      "post_training": null,
+      "post_load": null,
+      "pre_selection": null,
+      "pre_D": null,
+      "post_D": null,
+      "pre_AB": null,
+      "post_AB": null
+    }
+  },
+  "stage": "preflight",
+  "stage_validation": {
+    "contract": "app:run-stages",
+    "precision_required_by_stage": "pre_D",
+    "primary_estimate_required_fields": {
+      "single_policy": [
+        "inference.primary_policy_config_id",
+        "inference.single_policy_half_width_fraction",
+        "inference.planned_outcome_variance",
+        "inference.dependence_assumptions.single_policy_hit"
+      ],
+      "paired": [
+        "selection.primary_comparison",
+        "inference.half_width_fraction",
+        "inference.planned_outcome_variance",
+        "inference.dependence_assumptions.paired_hit"
+      ]
+    }
+  },
+  "artifacts": {
+    "trained_models_sha256": null,
+    "selected_policies_sha256": null,
+    "selection_report_sha256": null,
+    "final_evaluation_report_sha256": null
+  }
+}

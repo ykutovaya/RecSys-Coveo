@@ -1,0 +1,371 @@
+{
+  "registry_version": "2",
+  "normative_ids": [
+    "B01",
+    "B02",
+    "B03",
+    "B04",
+    "B05",
+    "B06",
+    "B07",
+    "B08",
+    "B09",
+    "B10",
+    "B11",
+    "B12",
+    "B13",
+    "B14",
+    "B15",
+    "B16",
+    "B17",
+    "B18",
+    "N01",
+    "N02",
+    "N03",
+    "N04",
+    "N05",
+    "N06",
+    "N07",
+    "X01",
+    "X02",
+    "X03",
+    "X04",
+    "X05"
+  ],
+  "own_ids": [
+    "EXPL01"
+  ],
+  "implemented_checks": {
+    "B07.evaluation": {
+      "test_id": "B07", "part": "evaluation", "complete_test": true,
+      "paths": ["tests/unit/test_e3_retrieval.py", "tests/properties/test_e3_retrieval_properties.py", "tests/unit/test_e5_replay.py", "tests/unit/test_e5_metrics.py", "tests/properties/test_e5_metrics_properties.py", "tests/integration/test_e5_reporting.py", "tests/integration/test_e5_raw_workflow.py"],
+      "reference_paths": ["tests/reference/e3_retrieval_oracle.py", "tests/reference/e5_metrics_oracle.py"],
+      "coverage": "Квоты, допустимость, ветвь и доставка; общий знаменатель, цепочка V/U/Hit и три потери",
+      "remaining": "Фактический C_smoke — Э5-09; измеренные отказы сервиса — Э6"
+    },
+    "B08.evaluation": {
+      "test_id": "B08", "part": "evaluation", "complete_test": true,
+      "paths": ["tests/unit/test_e3_retrieval.py", "tests/unit/test_e5_replay.py", "tests/unit/test_e5_metrics.py"],
+      "reference_paths": ["tests/reference/e3_retrieval_oracle.py", "tests/reference/e5_metrics_oracle.py"],
+      "coverage": "Происхождения, измеренные и отсутствующие списки, пересечения, Delta_fixed без заполнения, резерв и знаменатели",
+      "remaining": "Фактический расчёт — Э5-09"
+    },
+    "B10.evaluation": {
+      "test_id": "B10", "part": "evaluation", "complete_test": false,
+      "paths": ["tests/unit/test_e5_replay.py", "tests/properties/test_e5_replay_properties.py", "tests/unit/test_e5_sensitivity.py", "tests/unit/test_e5_admission.py", "tests/integration/test_e5_preparation.py", "tests/integration/test_e5_admission_binding.py", "tests/integration/test_e5_replay_integrity.py", "tests/integration/test_e5_replay_pipeline.py", "tests/unit/test_e7_evaluate_admission.py", "tests/integration/test_e7_evaluate.py"],
+      "reference_paths": ["tests/reference/e3_cases.py", "tests/reference/manifest_cases.py"],
+      "coverage": "Раздельные выдача и цели, допуск C_smoke и pre_D до чтения таблиц, фиксированная база без подбора, собственные признаки двух моделей, отсутствие утечки будущего и общий знаменатель",
+      "remaining": "Подбор и режим пары не реализованы; фактическая оценка D требует отдельного плана и допуска"
+    },
+    "B11": {
+      "test_id": "B11", "part": "disabled_calibration", "complete_test": true,
+      "paths": ["tests/unit/test_manifest_protocol.py", "tests/unit/test_e5_replay.py"],
+      "reference_paths": ["tests/reference/manifest_cases.py", "tests/reference/e3_cases.py"],
+      "coverage": "Калибровка и E отключены; локальная выдача использует сырые баллы, а не вероятности покупки",
+      "remaining": "Проверка параметров фактического запуска — Э5-08"
+    },
+    "B12": {
+      "test_id": "B12", "part": "calendar_intervals", "complete_test": true,
+      "paths": ["tests/unit/test_e5_intervals.py", "tests/properties/test_e5_intervals_properties.py", "tests/unit/test_e5_bootstrap_experiment.py", "tests/integration/test_e7_evaluate.py"],
+      "reference_paths": ["tests/reference/e5_intervals_oracle.py", "tests/reference/e5_bootstrap_experiment.py"],
+      "coverage": "Календарные блоки, отношение сумм и парный перенос; редкие исходы, вырождение, границы достаточности, независимый опыт дисперсии и покрытия",
+      "remaining": "План зависимости и достаточность конкретного C_smoke оцениваются отдельно; до D требуется план точности"
+    },
+    "B01.features": {
+      "test_id": "B01",
+      "part": "features",
+      "complete_test": false,
+      "paths": ["tests/unit/test_e3_scores.py", "tests/unit/test_e3_boundaries.py", "tests/integration/test_e3_context.py"],
+      "reference_paths": ["tests/reference/e3_features_oracle.py"],
+      "coverage": "Срез пакета, полная последняя группа, независимость отбора и признаков от будущих событий и времени доступности",
+      "remaining": "Повтор на фактических входах Э1-10"
+    },
+    "B02.features": {
+      "test_id": "B02",
+      "part": "features",
+      "complete_test": false,
+      "paths": ["tests/unit/test_e3_scores.py", "tests/unit/test_e3_retrieval.py", "tests/integration/test_e3_context.py"],
+      "reference_paths": ["tests/reference/e3_retrieval_oracle.py"],
+      "coverage": "Последний поиск, возраст и совместимость пространства; отбор и признаки не зависят от поисковой выдачи и кликов",
+      "remaining": "Полный ответ с ранжировщиком проверен в test_e3_context; фактический C_smoke — Э5-09"
+    },
+    "B05.features": {
+      "test_id": "B05",
+      "part": "features",
+      "complete_test": true,
+      "paths": ["tests/unit/test_e3_features.py", "tests/properties/test_e3_features_properties.py", "tests/integration/test_e3_context.py"],
+      "reference_paths": ["tests/reference/e3_features_oracle.py"],
+      "coverage": "Все 93 столбца, маски, кратности, нулевые группы; совпадение пакетного и последовательного расчётов",
+      "remaining": "Повтор применимых проверок на фактическом обучении Э4-08"
+    },
+    "B05.ranker": {
+      "test_id": "B05",
+      "part": "ranker",
+      "complete_test": true,
+      "paths": ["tests/unit/test_e4_objective.py", "tests/unit/test_e4_boundaries.py", "tests/properties/test_e4_objective_properties.py", "tests/unit/test_e4_library.py", "tests/integration/test_e4_training.py", "tests/integration/test_e4_pipeline.py", "tests/integration/test_e4_model_io.py", "tests/integration/test_e4_publication.py"],
+      "reference_paths": ["tests/reference/e4_objective_oracle.py", "tests/reference/e4_cases.py"],
+      "coverage": "B05 активной базы: прямые пары, фиксированные разности, FP64/FP32, нулевые группы, числовое и групповое категориальное дерево LightGBM, сохранение модели",
+      "remaining": "Э4-08: применение принятого кода к фактическому B; это не post_training Coveo"
+    },
+    "B10.ranker": {
+      "test_id": "B10",
+      "part": "ranker",
+      "complete_test": false,
+      "paths": ["tests/unit/test_e4_table.py", "tests/properties/test_e4_table_properties.py", "tests/unit/test_e4_admission.py", "tests/unit/test_e4_architecture.py", "tests/integration/test_e4_integrity.py"],
+      "reference_paths": ["tests/reference/e4_table_oracle.py", "tests/reference/manifest_cases.py"],
+      "coverage": "Группы только из B, отдельные цели, отсутствие влияния закрытых периодов, фактический валидатор до доступа к B и привязки запуска",
+      "remaining": "Вариант без метаданных — B10.metadata; выбор и итоговая оценка — Э7"
+    },
+    "B07.retrieval": {
+      "test_id": "B07",
+      "part": "retrieval",
+      "complete_test": false,
+      "paths": ["tests/unit/test_e3_retrieval.py", "tests/properties/test_e3_retrieval_properties.py"],
+      "reference_paths": ["tests/reference/e3_retrieval_oracle.py"],
+      "coverage": "Точный Top_m, квоты, допустимость, заполнение и отдельная резервная ветвь",
+      "remaining": "Выбор и доставка ответа, цепочка и разложение охвата — Э5–Э6"
+    },
+    "B08.retrieval": {
+      "test_id": "B08",
+      "part": "retrieval",
+      "complete_test": false,
+      "paths": ["tests/unit/test_e3_retrieval.py", "tests/unit/test_e3_features.py", "tests/properties/test_e3_retrieval_properties.py"],
+      "reference_paths": ["tests/reference/e3_retrieval_oracle.py"],
+      "coverage": "Несколько происхождений, балл вне квоты, обратные ранги, удаление источника без заполнения",
+      "remaining": "Доставка и знаменатели — Э5–Э6"
+    },
+    "B10.features": {
+      "test_id": "B10",
+      "part": "features",
+      "complete_test": false,
+      "paths": ["tests/unit/test_e3_boundaries.py", "tests/integration/test_e3_pipeline.py", "tests/integration/test_e3_integrity.py"],
+      "reference_paths": ["tests/reference/e3_features_oracle.py"],
+      "coverage": "Признаки не читают цели и закрытые периоды; реальный B запрещён до Э1-10, несовместимые пакеты и повторы отвергаются",
+      "remaining": "Вариант без метаданных — B10.metadata; ранжировщик — B10.ranker"
+    },
+    "B10.metadata": {
+      "test_id": "B10",
+      "part": "metadata",
+      "complete_test": false,
+      "paths": ["tests/unit/test_e7_config.py", "tests/unit/test_e7_cli.py", "tests/unit/test_e7_retrieval_features.py", "tests/unit/test_e7_ranker.py", "tests/unit/test_e7_admission.py", "tests/properties/test_e7_retrieval_features_properties.py", "tests/integration/test_e7_metadata.py", "tests/integration/test_e7_pipeline.py"],
+      "reference_paths": ["tests/reference/e3_retrieval_oracle.py", "tests/reference/e3_features_oracle.py", "tests/reference/manifest_cases.py"],
+      "coverage": "Два фиксированных профиля; отсутствие обращений к исключённым данным; инвариантность кандидатов, признаков, модели и выдачи при замене метаданных; собственная схема без категории, обучение и допуск на искусственных примерах",
+      "remaining": "Оценка чувствительности на реальном D; это не приёмка всего B10"
+    },
+    "B04.graph": {
+      "test_id": "B04",
+      "part": "graph",
+      "complete_test": true,
+      "paths": [
+        "tests/unit/test_e2_graph.py",
+        "tests/properties/test_e2_graph_properties.py",
+        "tests/integration/test_e2_historical.py"
+      ],
+      "reference_paths": ["tests/reference/e2_graph_oracle.py"],
+      "coverage": "Вклад и поддержка сессии, три отношения, разреживание, нормировка и регуляризация",
+      "remaining": "Проверка на расширенном A_G в Э2-08"
+    },
+    "B05.content": {
+      "test_id": "B05",
+      "part": "content",
+      "complete_test": true,
+      "paths": [
+        "tests/unit/test_e2_content.py",
+        "tests/properties/test_e2_content_properties.py"
+      ],
+      "reference_paths": ["tests/reference/e2_content_oracle.py"],
+      "coverage": "Раздельные модальности, маски, словарь A_G и порядковая цена",
+      "remaining": "Повтор применимых проверок на фактическом обучении Э4-08"
+    },
+    "B01.data": {
+      "test_id": "B01",
+      "part": "data",
+      "complete_test": true,
+      "paths": [
+        "tests/unit/test_e1_canonical.py",
+        "tests/properties/test_e1_canonical_properties.py",
+        "tests/unit/test_e1_state.py",
+        "tests/properties/test_e1_state_properties.py",
+        "tests/unit/test_e1_periods.py",
+        "tests/unit/test_e1_search.py",
+        "tests/unit/test_e1_targets.py",
+        "tests/properties/test_e1_targets_properties.py"
+      ],
+      "reference_paths": [
+        "tests/reference/e1_data_oracle.py",
+        "tests/reference/e1_state_oracle.py",
+        "tests/reference/e1_periods_oracle.py",
+        "tests/reference/e1_targets_oracle.py"
+      ],
+      "coverage": "Канонизация, видимые срезы, расписание и временные границы Э1",
+      "remaining": "Проверка на фактических входах Э1-10"
+    },
+    "B02.context": {
+      "test_id": "B02",
+      "part": "context",
+      "complete_test": false,
+      "paths": [
+        "tests/unit/test_e1_search.py",
+        "tests/unit/test_e1_state.py",
+        "tests/properties/test_e1_state_properties.py"
+      ],
+      "reference_paths": [
+        "tests/reference/e1_state_oracle.py"
+      ],
+      "coverage": "Последний поиск и независимость префикса/расписания от поисковых списков",
+      "remaining": "Повтор независимости полного ответа в Э3–Э5"
+    },
+    "B03.data": {
+      "test_id": "B03",
+      "part": "data",
+      "complete_test": false,
+      "paths": [
+        "tests/unit/test_contracts.py",
+        "tests/unit/test_e1_contracts.py",
+        "tests/unit/test_e1_io.py",
+        "tests/unit/test_e1_canonical.py",
+        "tests/unit/test_e1_envelope.py",
+        "tests/properties/test_e1_envelope_properties.py",
+        "tests/unit/test_supply_reader.py",
+        "tests/integration/test_supply_cli.py"
+      ],
+      "reference_paths": [
+        "tests/reference/e1_data_oracle.py",
+        "tests/reference/e1_envelope_oracle.py",
+        "tests/reference/supply_oracle.py"
+      ],
+      "coverage": "Контракты, канонизация, закрытый конверт и формат поставки Coveo",
+      "remaining": "B03.service — Э6; реальная подготовка и допуск — Э1-10"
+    },
+    "B06": {
+      "test_id": "B06",
+      "part": "admission",
+      "complete_test": false,
+      "paths": [
+        "tests/unit/test_e1_targets.py",
+        "tests/properties/test_e1_targets_properties.py",
+        "tests/unit/test_e1_periods.py"
+      ],
+      "reference_paths": [
+        "tests/reference/e1_targets_oracle.py",
+        "tests/reference/e1_periods_oracle.py"
+      ],
+      "coverage": "Первый запрос, зарегистрированные цели observed_purchases_v1 и календарный допуск",
+      "remaining": "Приёмка целей в полном маршруте с моделью — Э5"
+    },
+    "B09": {
+      "test_id": "B09",
+      "part": "disabled_purchase_feature",
+      "complete_test": false,
+      "paths": [
+        "tests/unit/test_manifest_protocol.py",
+        "tests/unit/test_e2_statistics.py",
+        "tests/properties/test_e2_statistics_properties.py",
+        "tests/unit/test_e3_features.py"
+      ],
+      "reference_paths": [
+        "tests/reference/manifest_cases.py",
+        "tests/reference/e2_statistics_oracle.py"
+      ],
+      "coverage": "Покупочная частота запрещена в паспорте, исторических статистиках и конкретной схеме признаков; счётчик зарегистрированных покупок сохранён отдельно",
+      "remaining": "Проверка фактических артефактов на Э1-10"
+    },
+    "B10.periods": {
+      "test_id": "B10",
+      "part": "periods",
+      "complete_test": false,
+      "paths": [
+        "tests/unit/test_e1_periods.py",
+        "tests/properties/test_e1_periods_properties.py",
+        "tests/unit/test_e1_access.py",
+        "tests/integration/test_e1_preparation.py",
+        "tests/unit/test_e2_input.py",
+        "tests/unit/test_e2_catalog.py"
+      ],
+      "reference_paths": [
+        "tests/reference/e1_periods_oracle.py"
+      ],
+      "coverage": "Семь частей, отбор, запрет закрытых исходов и независимость исторического пакета от поздних периодов",
+      "remaining": "Ранжировщик — к post_training, вариант без метаданных — к D"
+    },
+    "B13.preparation": {
+      "test_id": "B13",
+      "part": "validator_and_preparation",
+      "complete_test": true,
+      "paths": [
+        "tests/unit/test_artifacts.py",
+        "tests/unit/test_manifest.py",
+        "tests/unit/test_manifest_protocol.py",
+        "tests/unit/test_feature_schema.py",
+        "tests/integration/test_cli_workflow.py",
+        "tests/integration/test_manifest_stages.py",
+        "tests/unit/test_provenance.py",
+        "tests/unit/test_manifest_adversarial.py",
+        "tests/unit/test_manifest_evidence.py",
+        "tests/integration/test_e1_preparation.py",
+        "tests/unit/test_e1_verification.py",
+        "tests/unit/test_prepared_tables.py",
+        "tests/unit/test_architecture.py",
+        "tests/unit/test_supply_reader.py",
+        "tests/integration/test_supply_cli.py",
+        "tests/unit/test_e2_input.py",
+        "tests/integration/test_e2_historical.py"
+      ],
+      "reference_paths": [
+        "tests/reference/manifest_cases.py",
+        "tests/reference/supply_oracle.py"
+      ],
+      "coverage": "Валидатор 2.10, хранение, подготовка Э1, поставка Coveo и согласованность исторического пакета",
+      "remaining": "Не подтверждает полноту фактического паспорта или реальный preflight"
+    },
+    "B03.service": {
+      "test_id": "B03", "part": "service", "complete_test": false,
+      "paths": ["tests/unit/test_e6_state.py", "tests/unit/test_e6_state_store.py", "tests/integration/test_e6_api.py"],
+      "reference_paths": ["tests/reference/e1_state_oracle.py", "tests/reference/e1_envelope_oracle.py"],
+      "coverage": "Локальные квитанции, повторы, атомарность, лимиты, разрывы и поздние срезы",
+      "remaining": "Рабочая СУБД и нормативная нагрузка Э6-06–Э6-11"
+    },
+    "B13.service": {
+      "test_id": "B13", "part": "service", "complete_test": false,
+      "paths": ["tests/unit/test_e6_package.py", "tests/integration/test_e6_coordinator.py"],
+      "reference_paths": ["tests/reference/e3_features_oracle.py", "tests/reference/e3_retrieval_oracle.py"],
+      "coverage": "Совместимость локальной публикации, общий расчёт и сохранение исходных привязок",
+      "remaining": "Рабочая публикация и фактический post_load"
+    },
+    "B14.local": {
+      "test_id": "B14", "part": "local", "complete_test": false,
+      "paths": ["tests/unit/test_e6_runtime.py", "tests/unit/test_e6_protocol.py", "tests/integration/test_e6_coordinator.py", "tests/integration/test_e6_api.py"],
+      "reference_paths": ["tests/reference/e3_retrieval_oracle.py"],
+      "coverage": "Сроки, ограниченный пул, резерв, идемпотентность и недоставка",
+      "remaining": "Нормативная нагрузка, межпроцессное обслуживание и рабочий S_serve"
+    },
+    "B15.local": {
+      "test_id": "B15", "part": "local", "complete_test": false,
+      "paths": ["tests/unit/test_e6_state_store.py", "tests/unit/test_e6_trace.py", "tests/unit/test_e6_package.py"],
+      "reference_paths": ["tests/reference/e1_state_oracle.py"],
+      "coverage": "Файловое воспроизведение, повреждения, обязательная запись и завершённый исход",
+      "remaining": "Рабочие RTO/RPO, подписи, активация и откат"
+    },
+    "EXPL01": {
+      "test_id": "EXPL01", "part": "local", "complete_test": false,
+      "paths": ["tests/unit/test_e6_explanations.py", "tests/unit/test_e6_trace.py", "tests/integration/test_e6_coordinator.py"],
+      "reference_paths": ["tests/reference/e3_retrieval_oracle.py"],
+      "coverage": "Опоры, вклад и поддержка графа, источники основной и резервной ветвей, безопасный публичный текст",
+      "remaining": "Рабочая нагрузка и доступ к диагностике в Э6-09–Э6-11"
+    },
+    "B05.numerics": {
+      "test_id": "B05",
+      "part": "numerics",
+      "complete_test": true,
+      "paths": [
+        "tests/unit/test_numerics.py",
+        "tests/properties/test_numerics_properties.py"
+      ],
+      "reference_paths": [
+        "tests/reference/numerics_oracle.py"
+      ],
+      "coverage": "Общие устойчивые численные примитивы и внешние векторы",
+      "remaining": "Повтор применимых проверок на фактическом обучении Э4-08"
+    }
+  }
+}

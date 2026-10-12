@@ -1,0 +1,10 @@
+session_id,event_id,server_timestamp_epoch_ms,product_action,sku
+s1,e1,1000,detail,A
+s1,e2,1000,detail,A
+s1,e3,2000,add,A
+s1,e4,4000,purchase,B
+s1,e5,5000,detail,C
+s2,e6,1000,detail,A
+s2,e7,4000,remove,A
+s3,e8,1000,purchase,A
+s3,e9,1000,detail,A

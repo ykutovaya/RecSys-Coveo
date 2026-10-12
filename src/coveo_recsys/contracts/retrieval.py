@@ -1,0 +1,72 @@
+"""Фиксированные источники и пределы точного отбора Э3."""
+
+import math
+from dataclasses import dataclass
+
+from .common import InputValidationError, require_int64
+from .records import Record
+
+BASE_CONFIG_ID = "gcs_rk_v2_7"
+NO_METADATA_CONFIG_ID = "graph_recent_popularity_no_provided_metadata"
+METADATA370_CONFIG_ID = "gcs_rk_metadata370"
+METADATA370_QUOTAS = (50, 50, 50, 80, 60, 50, 20, 10)
+SUPPORTED_CONFIG_IDS = (BASE_CONFIG_ID, NO_METADATA_CONFIG_ID, METADATA370_CONFIG_ID)
+NO_METADATA_SOURCES = ("detail_detail", "detail_add", "detail_purchase", "recent", "popularity")
+NO_METADATA_QUOTAS = (50, 50, 50, 0, 0, 0, 20, 10)
+
+SOURCES = (
+    "detail_detail",
+    "detail_add",
+    "detail_purchase",
+    "description",
+    "image",
+    "search",
+    "recent",
+    "popularity",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalConfig(Record):
+    quotas: tuple[int, ...] = (50, 50, 50, 40, 30, 50, 20, 10)
+    max_candidates: int = 300
+    history_limit: int = 20
+    tau_history_ms: float = 300_000.0
+    search_max_age_ms: int = 600_000
+    vector_epsilon: float = 1e-12
+    block_size: int = 1024
+
+    def __post_init__(self) -> None:
+        Record.__post_init__(self)
+        for value in (
+            self.max_candidates,
+            self.history_limit,
+            self.search_max_age_ms,
+            self.block_size,
+        ):
+            if require_int64(value, nonnegative=True) == 0:
+                raise InputValidationError("Предел должен быть положительным")
+        if (
+            len(self.quotas) != len(SOURCES)
+            or any(q < 0 for q in self.quotas)
+            or sum(self.quotas) > self.max_candidates
+        ):
+            raise InputValidationError("Квоты не соответствуют источникам и общему бюджету")
+        if any(not math.isfinite(v) or v <= 0 for v in (self.tau_history_ms, self.vector_epsilon)):
+            raise InputValidationError("Неверное затухание или порог нормы")
+        if self.vector_epsilon != 1e-12:
+            raise InputValidationError("Базовая конфигурация требует epsilon=1e-12")
+
+
+def validate_retrieval_profile(config_id: str, config: RetrievalConfig) -> None:
+    """Именованные варианты сохраняют заранее закреплённые параметры."""
+    if config_id not in SUPPORTED_CONFIG_IDS:
+        raise InputValidationError("Неизвестный профиль отбора")
+    if config_id == NO_METADATA_CONFIG_ID and (
+        config.quotas != NO_METADATA_QUOTAS or config.max_candidates != 300
+    ):
+        raise InputValidationError("Профиль без метаданных требует фиксированные квоты и M=300")
+    if config_id == METADATA370_CONFIG_ID and config != RetrievalConfig(
+        quotas=METADATA370_QUOTAS, max_candidates=370
+    ):
+        raise InputValidationError("Профиль 370 меняет только квоты описаний и изображений")

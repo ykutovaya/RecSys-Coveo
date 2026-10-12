@@ -1,0 +1,28 @@
+{
+  "preparation": {
+    "path": "runs/coveo-ag50000-compact-v1",
+    "report_sha256": "21626b8dde9ae1261e763f128763b3d884e3c4ac16ea5f01223065de2a4526db"
+  },
+  "metadata_path": "data/01_raw/sku_to_content.csv",
+  "config": {
+    "snapshot_time_ms": 1549238400000,
+    "graph_max_group_distance": 10,
+    "graph_window_ms": 1800000,
+    "graph_tau_ms": 600000.0,
+    "graph_min_support": 3,
+    "graph_max_neighbors": 100,
+    "graph_regularization": 10.0,
+    "popularity_smoothing": 1.0,
+    "vector_epsilon": 1e-12,
+    "buffer_records": 100000,
+    "merge_fan_in": 16,
+    "max_pairs": 100000000,
+    "max_group_size": 100000,
+    "max_temp_bytes": 2147483648,
+    "max_result_bytes": 1073741824,
+    "max_memory_bytes": 4294967296,
+    "max_seconds": 7200.0,
+    "schema_version": "historical_package_v1",
+    "id_order": "utf8"
+  }
+}
