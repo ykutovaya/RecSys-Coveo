@@ -1,110 +1,124 @@
-# Сессионные рекомендации на данных Coveo
+# Session-based recommendations on Coveo data
 
-Рекомендательная система для коротких анонимных сессий: граф взаимодействий,
-метаданные товаров и ранжировщик LightGBM. Реализован путь от исходных CSV до
-локального HTTP API и оценки на отложенном периоде.
+English | [Русский](/README.ru.md)
 
-## Задача и ценность
+A recommender for short anonymous sessions, combining an interaction graph,
+product metadata, and a LightGBM ranker. It processes raw CSV files, serves
+recommendations through a local HTTP API, and evaluates them on a held-out period.
 
-Какие товары предложить посетителю, если о нём известны только действия текущей
-сессии? Система выдаёт до 20 SKU после первого допустимого блока событий.
-Цель — различные товары из **зарегистрированных покупок после этого запроса**
-в пределах 24 часов той же сессии. Это не предсказание последней покупки и не
-оценка вероятности покупки.
+## Problem and value
 
-Такой сценарий не требует постоянного профиля пользователя. Его трудности —
-короткий контекст, редкие покупки и товары без достаточной истории. Граф даёт
-связи по взаимодействиям, предоставленные векторы описаний и изображений —
-сходство товаров, ранжировщик объединяет эти сигналы.
+What should a visitor see when all we know is their activity in the current
+session? The system returns up to 20 SKUs after the first eligible event block.
+The target is the set of distinct products in **recorded purchases after that
+request**, within 24 hours and the same session. It is neither last-purchase
+prediction nor purchase-probability estimation.
 
-Ценность проекта — проверяемый эксперимент на реальных данных: временное
-разделение без будущих событий в признаках, сравнение с простыми методами,
-разбор потерь и работающая выдача с резервным ответом. Польза для магазина
-остаётся гипотезой: рост продаж и эффект показа рекомендаций здесь не измерялись.
+This setting needs no persistent user profile. The challenges are limited
+context, sparse purchases, and products with little interaction history.
+The graph captures relationships from interactions; the supplied description
+and image vectors represent product similarity; the ranker combines these signals.
 
-Используется [Coveo SIGIR eCOM 2021, Public Data Release 1.0.0](https://github.com/coveooss/SIGIR-ecom-data-challenge).
-Опубликованная телеметрия не гарантирует полноту наблюдений; отсутствие записи
-о покупке не считается доказанным отсутствием покупки.
+The project provides a verifiable experiment on real data, with temporal splits
+that keep future events out of features, comparisons with simple baselines,
+an analysis of where targets are lost, and a working API with fallback responses.
+Business benefits remain untested: sales lift and the effect of displaying
+recommendations were not measured.
 
-## Как устроено решение
+The dataset is [Coveo SIGIR eCOM 2021, Public Data Release 1.0.0](https://github.com/coveooss/SIGIR-ecom-data-challenge).
+The released telemetry may be incomplete. A missing
+purchase record is not treated as proof that no purchase occurred.
+
+## How it works
 
 ```mermaid
 flowchart LR
-    CSV[CSV Coveo] --> Prep[Целые сессии и временные периоды]
-    Prep --> AG[A_G: история]
-    AG --> Hist[Каталог, граф, популярность, метаданные]
-    Prep --> B[B: обучение]
-    Hist --> BF[Кандидаты и признаки B]
+    CSV[Coveo CSV files] --> Prep[Whole sessions and time periods]
+    Prep --> AG[A_G: history]
+    AG --> Hist[Catalog, graph, popularity, metadata]
+    Prep --> B[B: training]
+    Hist --> BF[Candidates and features for B]
     B --> BF
     BF --> Model[LightGBM]
     Prep --> Eval[C_smoke / C_select / D]
-    Eval --> Prefix[Только события до запроса]
-    Hist --> Candidates[До 300 кандидатов]
+    Eval --> Prefix[Only events before the request]
+    Hist --> Candidates[Up to 300 candidates]
     Prefix --> Candidates
-    Candidates --> Rank[Признаки и ранжирование]
+    Candidates --> Rank[Features and ranking]
     Model --> Rank
-    Rank --> Top[До 20 SKU]
-    Eval --> Targets[Отдельные последующие цели]
-    Top --> Metrics[Оценка]
+    Rank --> Top[Up to 20 SKUs]
+    Eval --> Targets[Separate future targets]
+    Top --> Metrics[Evaluation]
     Targets --> Metrics
 ```
 
-A_G и B содержат по 50 000 сессий, исторический каталог — 14 314 SKU.
-В основной модели 93 признака и 200 деревьев. Сессии отбираются по хешу,
-независимо от покупок. Цели не участвуют в построении кандидатов.
-При обслуживании тот же расчёт использует текущее состояние сессии и готовую модель.
-Подробности — в [архитектуре](/documents/architecture.md).
+A_G and B each contain 50,000 sessions; the historical catalog contains 14,314 SKUs.
+The main model uses 93 features and 200 trees. Sessions are sampled by hash,
+independently of purchases. Candidate retrieval does not use targets.
+At serving time, the same computation uses the current session state and the
+trained model. See the [architecture](/documents/en/architecture.md).
 
-## Измеренные результаты
+## Measured results
 
-Hit@20 — доля сессий с хотя бы одним целевым SKU в первых 20 рекомендациях
-**среди сессий с зарегистрированной целью**, не среди всех сессий.
-Неизвестные цели не считаются промахами. Цели вне каталога остаются в знаменателе.
+Hit@20 is the fraction of sessions with at least one target SKU in the first
+20 recommendations **among sessions with a recorded target**, not among all
+sessions. Unknown targets are not counted as misses. Targets outside the
+catalog remain in the denominator.
 
-### D: итоговая оценка
+### D: final evaluation
 
-60 000 сессий; у 748 есть зарегистрированная цель, у 59 252 она неизвестна.
+60,000 sessions: 748 with a recorded target and 59,252 with an unknown target.
 
-| Метод | Сессии с попаданием | Hit@20 |
+| Method | Sessions with a hit | Hit@20 |
 |---|---:|---:|
-| **Граф + метаданные + LightGBM, 300 кандидатов (GCS+Rk)** | **441 / 748** | **58,96%** |
-| Последние товары с дополнением популярными (R) | 325 / 748 | 43,45% |
-| Граф + LightGBM без метаданных | 376 / 748 | 50,27% |
-| Популярные товары (P) | 2 / 748 | 0,27% |
+| **Graph + metadata + LightGBM, 300 candidates (GCS+Rk)** | **441 / 748** | **58.96%** |
+| Recent items, padded with popular items (R) | 325 / 748 | 43.45% |
+| Graph + LightGBM without metadata | 376 / 748 | 50.27% |
+| Popular items (P) | 2 / 748 | 0.27% |
 
-D и итоговая проверка `post_D` завершены. Статус статистического вывода —
-`insufficient`: обоснования временной зависимости недостаточно для пригодного
-интервала. Различия описательные; статистическое превосходство не заявляется.
+D and the final `post_D` check are complete. The statistical conclusion is
+`insufficient`: the evidence for the temporal dependence assumptions is too
+weak to support a usable interval. The differences are descriptive;
+they do not establish statistical superiority.
 
-Из 307 промахов основной модели: в 172 сессиях цель отсутствует в историческом
-каталоге, в 106 — в кандидатах, в 29 — в первых 20 результатах. Главные потери
-возникают до ранжирования.
+Of the main model's 307 misses, 172 sessions have no target in the historical
+catalog, 106 have no target among the candidates, and 29 have no target in the
+top 20. Most losses occur before ranking.
 
-### C_select: эксперимент с 370 кандидатами
+### C_select: the 370-candidate experiment
 
-50 000 сессий; у 625 есть зарегистрированная цель, у 49 375 она неизвестна.
+50,000 sessions: 625 with a recorded target and 49,375 with an unknown target.
 
-| Вариант | Сессии с попаданием | Hit@20 | Цель есть среди кандидатов |
+| Variant | Sessions with a hit | Hit@20 | Target among candidates |
 |---|---:|---:|---:|
-| **300 кандидатов, сохранён** | **389 / 625** | **62,24%** | 414 / 625 = 66,24% |
-| 370 кандидатов | 388 / 625 | 62,08% | 431 / 625 = 68,96% |
+| **300 candidates, retained** | **389 / 625** | **62.24%** | 414 / 625 = 66.24% |
+| 370 candidates | 388 / 625 | 62.08% | 431 / 625 = 68.96% |
 
-Гипотеза: больше похожих по описанию и изображению товаров даст больше попаданий.
-Квоты этих источников увеличены с 40/30 до 80/60; признаки B пересчитаны,
-новая модель обучена с прежними параметрами. Покрытие выросло, Hit@20 — нет.
-Собственно вычисления рекомендаций стали на 19% дольше; это не задержка HTTP
-и не полное время команды с общей записью. Сохранена более дешёвая исходная модель.
+The hypothesis was that retrieving more products similar in description and
+image would produce more hits. The two source quotas increased from 40/30 to
+80/60; B features were recomputed, and a new model was trained with the same
+parameters. Candidate coverage increased; Hit@20 did not.
+The measured computation time including diagnostics increased by roughly 19%,
+but the diagnostics differed: only the main model was also checked for
+sensitivity to event multiplicities. The timer also included diagnostic
+JSON serialization, but not the shared table writes.
+This is not a like-for-like measurement of `recommend` speed, HTTP latency,
+or total command runtime. The original model was retained under the selection
+rule because Hit@20 did not improve.
 
-Разница — одно попадание, не доказательство превосходства. C_select использован
-для выбора **после разбора D**; прежний D не подтверждает этот выбор независимо.
-Проценты разных периодов нельзя трактовать как прирост качества одной модели.
-Источники результатов и затраты — в [инструкции](/documents/reproduction.md#измеренные-затраты).
+The difference is one hit, not evidence of superiority. C_select was used
+for selection **after D had been analyzed**; the earlier D result does not
+independently validate that choice. Percentages from different periods must
+not be interpreted as a model improvement.
+Result sources and resource measurements are listed in the
+[reproduction guide](/documents/en/reproduction.md#measured-costs).
 
-## Установка и запуск
+## Installation and usage
 
-Python 3.11, зависимости закреплены в [uv.lock](/uv.lock). Команды выполняются
-из корня проекта. Реальные расчёты и локальный сервис проверены на Windows;
-[GitHub Actions](/.github/workflows/checks.yml) настроен на Ubuntu без данных Coveo.
+Python 3.11; dependencies are pinned in [uv.lock](/uv.lock).
+Run commands from the repository root. Real-data computations and the local
+service were tested on Windows;
+[GitHub Actions](/.github/workflows/checks.yml) runs on Ubuntu without Coveo data.
 
 ```powershell
 uv sync --locked --no-extra neural --no-editable
@@ -115,65 +129,78 @@ uv run --no-sync mypy
 uv run --no-sync pytest -m "not coveo and not load"
 ```
 
-Полный pytest без Coveo и нагрузки проверен из обычной установки wheel в чистом
-каталоге. Для локального допуска на Windows разрешены только известные пропуски тестов символических
-ссылок с `WinError 1314`; они остаются `skipped`. На Ubuntu эти тесты обязательны.
-Остальные правила — в [ТЗ §15.1](/documents/implementation_spec.md#151-общий-порядок).
+The full pytest suite excluding Coveo and load tests was run from a
+non-editable wheel installation in a clean directory.
+For local admission on Windows, only known symbolic-link test skips caused
+by `WinError 1314` are allowed; they remain `skipped`. These tests are
+mandatory on Ubuntu. Other rules are in
+[the implementation specification, §15.1](/documents/en/implementation_spec.md#151-general-procedure).
 
-CSV и обученная модель в Git не распространяются. Для API сначала нужны готовые
-артефакты, перечисленные в [инструкции запуска](/documents/reproduction.md#локальная-демонстрация).
-Существующие настройки сервиса привязаны к локальному завершённому эксперименту.
+The CSV files and trained model are not distributed in Git.
+The API requires the artifacts listed in the
+[local demo instructions](/documents/en/reproduction.md#local-demo).
+The service configuration points to a completed local experiment.
 
-Проверки данных и сборка допусков перенесены в репозиторий;
-[последовательность команд](/documents/reproduction.md#порядок-полного-расчёта)
-ведёт от трёх CSV до модели и отчёта C_smoke без прежних запусков.
-Малый реальный путь проверен из отдельной обычной установки wheel;
-[результаты и затраты](/documents/reproduction.md#результат-малого-прогона)
-зафиксированы. Это воспроизведение базового пути, не опубликованных результатов D;
-основная модель сохранена.
+The repository includes data checks and tools for preparing admission evidence.
+The [command sequence](/documents/en/reproduction.md#full-computation-workflow)
+builds a model and a C_smoke report from the three CSV files without relying
+on previous runs. This small real-data workflow was verified with a separate
+non-editable wheel installation;
+[results and resource usage](/documents/en/reproduction.md#small-run-results)
+are recorded. It reproduces the basic workflow, not the published D results;
+the main model was preserved.
 
-## Пример рекомендаций
+## Example recommendations
 
-Сервис принимает закрытый блок событий через `POST /v1/blocks`, затем возвращает
-рекомендации через `POST /v1/recommendations`. Работают повтор без пересчёта,
-резерв при вычислительном тайм-ауте и отказ при неполном состоянии.
-Предельное время запроса — 1 с, из него 100 мс оставлено на резерв, запись и возврат.
+The service accepts a sealed event block through `POST /v1/blocks`, then
+returns recommendations through `POST /v1/recommendations`.
+It supports retries without recomputation, falls back on a computation timeout,
+and refuses requests when state is incomplete. The request deadline is 1 s, with
+100 ms reserved for fallback, persistence, and returning the response.
 
-[Запрос и проверенный ответ](/documents/reproduction.md#локальная-демонстрация)
-показаны на готовой реальной модели. SKU обезличены; названия товаров не
-восстанавливаются. Пример демонстрирует API, а не заменяет оценку качества.
+The [request and verified response](/documents/en/reproduction.md#local-demo)
+use the trained real-data model. SKUs are anonymized; product names cannot
+be recovered. The example demonstrates the API, not recommendation quality.
 
-## Ограничения
+## Limitations
 
-- Протокол оценивает зарегистрированные покупки. Это не конверсия, не все покупки
-  и не результат A/B-теста.
-- В B только 625 сессий с целью; цели и покупки редки, исторический каталог неполон.
-- Метаданные предоставлены одним снимком, их историческая доступность не доказана.
-  Поэтому отдельно проверен вариант без них.
-- Интервалы и итоговый статистический статус — `insufficient`. Уже исследованный D
-  нельзя использовать для нового независимого подтверждения улучшений.
-- API локальный; соответствие срокам под рабочей нагрузкой не подтверждено.
-  Нейросетевая модель, промышленное развёртывание и A/B не реализованы.
-- Полный расчёт занимает часы. Проверка малого пути не заменяет воспроизведение
-  полного эксперимента. Данные и модель не входят в репозиторий.
+- The protocol evaluates recorded purchases. It does not measure conversion,
+  all purchases, or an A/B test outcome.
+- Only 625 B sessions have a target. Targets and purchases are sparse,
+  and the historical catalog is incomplete.
+- Metadata was released as a single snapshot; its historical availability
+  is unproven. A separate variant without metadata was therefore evaluated.
+- Intervals and the final statistical conclusion are marked `insufficient`.
+  D has already been studied and cannot independently confirm new improvements.
+- The API is local; deadline compliance under production load is unverified.
+  A neural model, production deployment, and A/B testing are not implemented.
+- Full computation takes hours. Checking the small workflow does not reproduce
+  the full experiment. Data and models are not included in the repository.
 
-## Дальнейшее развитие
+## Future work
 
-Расширение покрытия каталога, обучаемые представления на графе и метаданных,
-обновление связей с учётом времени. Последовательную модель стоит проверять лишь
-при достаточном контексте до рекомендации. Это необязательные исследования,
-не заявленные возможности; [гипотезы и способы сравнения](/documents/development_plan.md#47-дальнейшее-развитие).
+Possible next steps include broader catalog coverage, learned representations
+based on the graph and metadata, and time-aware updates to relationships.
+A sequential model is worth testing only when enough context exists before
+the recommendation.
+These are optional research directions, not implemented capabilities; see
+[hypotheses and comparison protocols](/documents/en/development_plan.md#47-further-development).
 
-## Документация
+## Documentation
 
-- [Воспроизведение и демонстрация](/documents/reproduction.md).
-- [Архитектура](/documents/architecture.md), [ТЗ](/documents/implementation_spec.md),
-  [план и состояние работ](/documents/development_plan.md).
-- [Математическая спецификация: PDF](/documents/math/coveo_session_recommender_math.pdf)
-  и [LaTeX](/documents/math/coveo_session_recommender_math.tex).
-- [Настройки](/configs/README.md), [схемы](/schemas/README.md),
-  [шаблон паспорта](/documents/math/coveo_session_recommender_run_manifest.template.json).
+- [Reproduction and demo](/documents/en/reproduction.md).
+- [Architecture](/documents/en/architecture.md),
+  [implementation specification](/documents/en/implementation_spec.md),
+  [development plan and status](/documents/en/development_plan.md).
+- Mathematical specification:
+  English [PDF](/documents/en/math/coveo_session_recommender_math.pdf) /
+  [LaTeX](/documents/en/math/coveo_session_recommender_math.tex);
+  Russian [PDF](/documents/math/coveo_session_recommender_math.pdf) /
+  [LaTeX](/documents/math/coveo_session_recommender_math.tex).
+- Shared [configuration files](/configs/README.md) (directory guide in Russian) and
+  [schemas](/schemas/README.md);
+  [run manifest template](/documents/math/coveo_session_recommender_run_manifest.template.json).
 
-Данные получают самостоятельно по условиям Coveo. Лицензия собственного кода
-пока не выбрана; условия использования данных и распространения производных
-артефактов рассматриваются отдельно.
+The project code is released under the [MIT license](https://github.com/ykutovaya/RecSys-Coveo?tab=MIT-1-ov-file#MIT-1-ov-file).
+Obtain the data separately under Coveo's terms. The code license does not
+replace the terms for using the data or distributing derived artifacts.

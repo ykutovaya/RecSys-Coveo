@@ -213,25 +213,30 @@ def _transport_json(envelope: bytes) -> Any:
 
 
 def _events_bytes(text: str) -> bytes:
-    """Извлечь исходный фрагмент после строгого разбора полного JSON-объекта."""
+    """Извлечь исходный фрагмент; полный JSON отдельно проверяется строго."""
     decoder = json.JSONDecoder(parse_int=_transport_int)
     position = text.index("{") + 1
-    while True:
-        while text[position] in _SPACE:
+    while position < len(text):
+        while position < len(text) and text[position] in _SPACE:
             position += 1
+        if position == len(text) or text[position] == "}":
+            break
         key, position = decoder.raw_decode(text, position)
-        while text[position] in _SPACE:
+        while position < len(text) and text[position] in _SPACE:
             position += 1
         position += 1  # Двоеточие уже проверено _transport_json.
-        while text[position] in _SPACE:
+        while position < len(text) and text[position] in _SPACE:
             position += 1
         start = position
         _, position = decoder.raw_decode(text, position)
         if key == "events":
             return text[start:position].encode("utf-8")
-        while text[position] in _SPACE:
+        while position < len(text) and text[position] in _SPACE:
             position += 1
-        position += 1  # Запятая: обязательное поле events ещё впереди.
+        if position == len(text) or text[position] == "}":
+            break
+        position += 1  # Запятая перед следующим полем.
+    raise ValueError("Отсутствует обязательное поле events")
 
 
 def _sku(value: Any, path: str, limits: EnvelopeLimits) -> None:

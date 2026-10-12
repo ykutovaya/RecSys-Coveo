@@ -116,6 +116,58 @@ def test_closed_time_conflict_preserves_history_and_quarantines(wire):
         prefix(app)
 
 
+@pytest.mark.parametrize("excess", [-1, 0, 1], ids=["below-limit", "at-limit", "above-limit"])
+def test_quarantine_total_utf8_bytes_are_bounded_without_losing_history(excess):
+    app = service()
+    accept(app, packet())
+    accepted = app.store.read("n", "s")
+    limit = 1_048_576
+    wires = []
+    for index, size in enumerate((limit // 2, limit // 2 + excess)):
+        wire = packet(block=f"bad{index}", events=[(f"bad{index}", "detail", "B")])
+        wire = wire.replace(f'"bad{index}"'.encode(), f'"плохой{index}"'.encode())
+        # Исходные байты нагрузки изменились; отказ не должен сохранить сверх лимита.
+        wire = b" " * (size - len(wire)) + wire
+        wires.append(wire)
+        assert accept(app, wire).reason == "invalid_input"
+    state = app.store.read("n", "s")
+    assert state.quarantine == tuple(w.decode() for w in wires[: 1 if excess > 0 else 2])
+    assert sum(len(text.encode("utf-8")) for text in state.quarantine) <= limit
+    assert state.blocks == accepted.blocks and state.snapshot == accepted.snapshot
+    assert state.last_arrival_ms == accepted.last_arrival_ms
+    assert state.gap_reasons == ("invalid_input",) and not state.stream_complete
+    assert accept(app, wires[-1]).reason == "invalid_input"
+    assert app.store.read("n", "s").quarantine == state.quarantine
+    with pytest.raises(StateError, match="state_incomplete"):
+        prefix(app)
+
+
+def test_quarantine_stays_bounded_across_unique_errors_and_rate_rejections():
+    app = service()
+    accepted_wire = packet(events=[(f"e{i}", "detail", "A") for i in range(100)])
+    assert accept(app, accepted_wire).status == "accepted"
+    before = app.store.read("n", "s")
+    limit = 1_048_576
+    for index in range(8):
+        wire = packet(block=f"bad{index}", events=[(f"bad{index}", "detail", "B")])
+        reason = "rate_rejected"
+        if index % 2:
+            wire = wire.replace(b'"closed":true', b'"closed":false')
+            reason = "invalid_input"
+        wire = b" " * (limit // 2 - len(wire)) + wire
+        assert accept(app, wire).reason == reason
+        assert accept(app, wire).reason == reason
+        state = app.store.read("n", "s")
+        assert sum(len(text.encode("utf-8")) for text in state.quarantine) <= limit
+        assert state.blocks == before.blocks and state.snapshot == before.snapshot
+        assert not state.stream_complete
+    assert len(state.quarantine) == 2
+    assert state.gap_reasons == ("invalid_input", "rate_rejected")
+    repeat = accept(app, accepted_wire)
+    assert repeat.reason == "duplicate_rate_rejected"
+    assert app.store.read("n", "s") == state
+
+
 def test_known_events_under_new_block_id_do_not_create_block():
     app = service()
     accept(app, packet())

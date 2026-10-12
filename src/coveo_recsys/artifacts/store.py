@@ -244,6 +244,11 @@ class LocalArtifactStore:
                 raise ArtifactError("Повреждён дескриптор артефакта")
             raw = strict_json_loads(encoded)
             descriptor = ArtifactDescriptor(**raw)
+        except FileNotFoundError as exc:
+            raise ArtifactError(
+                f"Публикация {relative_path} не завершена; используйте новый каталог запуска. "
+                "Оставшиеся файлы не изменены."
+            ) from exc
         except (OSError, ValueError, TypeError) as exc:
             raise ArtifactError("Нет корректного дескриптора завершённой публикации") from exc
         if descriptor.path != relative_path:
@@ -351,7 +356,16 @@ class LocalArtifactStore:
             local_dependencies,
         )
         encoded = canonical_json_bytes(descriptor.to_dict())
-        if self._path(relative_path).exists():
+        published_files = tuple(
+            self._path(relative_path + suffix).exists()
+            for suffix in ("", ".artifact.sha256", ".artifact.json")
+        )
+        if any(published_files) and not all(published_files):
+            raise ArtifactError(
+                f"Публикация {relative_path} не завершена; используйте новый каталог запуска. "
+                "Оставшиеся файлы не изменены."
+            )
+        if published_files[0]:
             if not reuse:
                 raise FileExistsError(relative_path)
             existing = self.describe(relative_path)

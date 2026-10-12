@@ -29,6 +29,8 @@ from coveo_recsys.data.schedule import advance_schedule
 
 from .reducer import build_prefix, empty_prefix, reduce_state
 
+MAX_QUARANTINE_BYTES = 1_048_576  # Сумма UTF-8 байтов конвертов одной сессии.
+
 
 class IntakeService:
     def __init__(
@@ -350,7 +352,9 @@ class IntakeService:
             if len(envelope) <= self.limits.max_request_bytes:
                 text = envelope.decode("utf-8", errors="replace")
                 if text not in quarantine:
-                    quarantine = (*quarantine, text)
+                    size = sum(len(item.encode("utf-8")) for item in quarantine)
+                    if size + len(text.encode("utf-8")) <= MAX_QUARANTINE_BYTES:
+                        quarantine = (*quarantine, text)
             updated = replace(
                 current,
                 revision=current.revision + 1,

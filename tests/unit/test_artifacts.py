@@ -39,27 +39,51 @@ def test_reject_path(tmp_path: Path, path: str) -> None:
         LocalArtifactStore(tmp_path).publish_bytes(path, b"x", **META)
 
 
-def test_corruption_and_incomplete_publication(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_corrupted_payload_is_not_read(tmp_path: Path) -> None:
     store = LocalArtifactStore(tmp_path)
     store.publish_bytes("x", b"content", **META)
     (tmp_path / "x").write_bytes(b"changed")
     with pytest.raises(ArtifactError):
         store.read_bytes("x")
-    original = store._atomic_write
 
-    def fail_descriptor(path: str, data: bytes) -> None:
-        if path.endswith("artifact.json"):
+
+@pytest.mark.parametrize("boundary", ["object", "checksum", "descriptor"])
+@pytest.mark.parametrize("reuse", [False, True])
+def test_interrupted_publication_requires_new_run_without_changing_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str, reuse: bool
+) -> None:
+    store = LocalArtifactStore(tmp_path)
+    original = store._atomic_write
+    interrupted_path = {
+        "object": f".objects/{sha256_bytes(b'bytes')}",
+        "checksum": "interrupted.artifact.sha256",
+        "descriptor": "interrupted.artifact.json",
+    }[boundary]
+
+    def fail_publication(path: str, data: bytes) -> None:
+        if path == interrupted_path:
             raise OSError("simulated interrupted publication")
         original(path, data)
 
-    monkeypatch.setattr(store, "_atomic_write", fail_descriptor)
-    with pytest.raises(OSError):
+    monkeypatch.setattr(store, "_atomic_write", fail_publication)
+    with pytest.raises(OSError, match="simulated interrupted publication"):
         store.publish_bytes("interrupted", b"bytes", **META)
     with pytest.raises(ArtifactError):
         store.read_bytes("interrupted")
     assert not list(tmp_path.rglob(".pending-*"))
+    monkeypatch.setattr(store, "_atomic_write", original)
+    before = {
+        path.relative_to(tmp_path): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    with pytest.raises(ArtifactError, match="новый каталог запуска"):
+        store.publish_bytes("interrupted", b"bytes", reuse=reuse, **META)
+    assert before == {
+        path.relative_to(tmp_path): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
 
 
 def test_tables_and_matrices(tmp_path: Path) -> None:

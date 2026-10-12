@@ -273,6 +273,26 @@ def test_block_receipt_preserves_raw_bytes_and_explicit_stream_signal(service, c
     assert parameters["now_ms"] == 2000
 
 
+def test_missing_events_is_invalid_input_through_real_intake(service):
+    from coveo_recsys.contracts.preparation import TaskConfig
+    from coveo_recsys.state.service import IntakeService
+    from coveo_recsys.state.store import MemoryStateStore
+    from tests.unit.test_e6_state import packet
+
+    app, coordinator = service
+    coordinator.intake = IntakeService(
+        MemoryStateStore(), TaskConfig(), {"private-token": "shop"}, 0, 10_000
+    )
+    header = json.loads(packet(namespace="shop"))
+    del header["events"]
+    status, body, _ = asyncio.run(request(app, "/v1/blocks", payload=json.dumps(header).encode()))
+    assert status == 200
+    assert body["status"] == "rejected" and body["reason"] == "invalid_input"
+    state = coordinator.intake.store.read("shop", "s")
+    assert not state.blocks and not state.stream_complete
+    assert state.gap_reasons == ("invalid_input",)
+
+
 def test_slow_receipt_send_cannot_hold_admission_past_deadline(service):
     app, coordinator = service
     coordinator.timeout_ms, coordinator.reserve_ms = 100, 50

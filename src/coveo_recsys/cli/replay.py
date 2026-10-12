@@ -3,6 +3,7 @@
 import json
 import sys
 import time
+import warnings
 from collections.abc import Callable
 from dataclasses import asdict, replace
 from itertools import zip_longest
@@ -172,6 +173,17 @@ def read_report(run: Path) -> dict[str, Any]:
             raise InputValidationError("Markdown отличается от сохранённого отчёта")
     else:
         store._atomic_write(MARKDOWN, markdown)
+    if period == "C_select" and any(
+        summary.get("full_recommendation_timing", {}).get(policy, {}).get("recommend_seconds")
+        is None
+        for policy in policies
+    ):
+        warnings.warn(
+            "recommend_seconds не измерено в старом отчёте; calculation_seconds включает "
+            "неодинаковую диагностику и её JSON, а не сопоставимый замер recommend.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     return summary
 
 
@@ -656,6 +668,7 @@ def run_replay(
             )
         stage, processed = "recommendations", 0
         calculation_seconds = dict.fromkeys(policies, 0.0)
+        recommend_seconds = dict.fromkeys(policies, 0.0)
         write_seconds = 0.0
         recommendation_started = time.perf_counter()
         check_budget()
@@ -704,6 +717,7 @@ def run_replay(
                     diagnostics: dict[str, Any] = {}
                     calculation_tick = time.perf_counter()
                     tick = time.monotonic()
+                    recommend_tick = time.perf_counter()
                     answer = recommend(
                         active_context,
                         active_engine,
@@ -714,6 +728,7 @@ def run_replay(
                         diagnostics=diagnostics,
                         diagnostic_depth=evaluation_plan["diagnostic_depth"],
                     )
+                    recommend_seconds[policy] += time.perf_counter() - recommend_tick
                     elapsed_ms = max(0, round((time.monotonic() - tick) * 1000))
                     answer = replace(answer, elapsed_ms=elapsed_ms)
                     batch = diagnostics.pop("features")
@@ -802,13 +817,20 @@ def run_replay(
                 policy: {
                     "requests": total_requests,
                     "calculation_seconds": calculation_seconds[policy],
+                    "recommend_seconds": recommend_seconds[policy],
                 }
                 for policy in policies
             }
             result["full_recommendation_timing"].update(
                 shared_serialization_and_write_seconds=write_seconds,
                 both_policies_pipeline_seconds=full_seconds,
-                note="Общая запись включена в полный путь; время записи не делится между моделями. Это пакетный расчёт, не задержка HTTP.",
+                note=(
+                    "recommend_seconds — сумма времени вызовов recommend; диагностика, "
+                    "сериализация и запись вне вызова исключены. calculation_seconds сохраняет "
+                    "расчёт с неодинаковой диагностикой и её JSON. Общая запись включена в "
+                    "полный путь и не делится между моделями. Это пакетный расчёт, не задержка "
+                    "HTTP и не время одного predict."
+                ),
             )
         if before_publish is not None:
             before_publish()

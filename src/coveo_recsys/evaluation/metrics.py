@@ -73,7 +73,7 @@ def _quality(
 
 def _request_slices(request: PreparedRequest, catalog: Collection[str]) -> list[str]:
     prefix = request.prefix
-    size = sum(item.count for item in prefix.detail_history)
+    size = sum(count for kind, _, count in prefix.counters if kind == "detail")
     history = (
         "0"
         if size == 0

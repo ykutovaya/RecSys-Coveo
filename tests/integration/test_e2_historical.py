@@ -126,11 +126,10 @@ def test_incompatible_or_corrupt_parts_are_not_reused(tmp_path, change):
             publish_package(store, package, config, **kwargs)
 
 
-def test_cli_builds_and_reuses_completed_preparation(tmp_path, capsys, request):
+@pytest.fixture
+def historical_cli_args(tmp_path, request):
     import json
     from pathlib import Path
-
-    from coveo_recsys.cli import main
 
     root = Path(__file__).resolve().parents[2]
     source = request.getfixturevalue("prepared_source")
@@ -145,7 +144,7 @@ def test_cli_builds_and_reuses_completed_preparation(tmp_path, capsys, request):
     settings_path = tmp_path / "historical.json"
     settings_path.write_text(json.dumps(settings), encoding="utf-8")
     destination = tmp_path / "historical"
-    args = [
+    return [
         "--project-root",
         str(root),
         "historical",
@@ -157,12 +156,55 @@ def test_cli_builds_and_reuses_completed_preparation(tmp_path, capsys, request):
         "--run-id",
         "small-e2",
     ]
+
+
+def test_cli_builds_and_reuses_completed_preparation(tmp_path, capsys, historical_cli_args):
+    import json
+
+    from coveo_recsys.cli import main
+
     for reused in (False, True):
-        assert main(args) == 0
+        assert main(historical_cli_args) == 0
         result = json.loads(capsys.readouterr().out)
         assert result["status"] == "completed" and result["session_count"] == 2
         assert result["reused_package"] is reused
-    assert load_historical(LocalArtifactStore(destination)).catalog.skus == ("A", "B", "C")
+    assert load_historical(LocalArtifactStore(tmp_path / "historical")).catalog.skus == (
+        "A",
+        "B",
+        "C",
+    )
+
+
+def test_cli_rejects_interrupted_artifact_and_preserves_its_files(
+    tmp_path, capsys, monkeypatch, historical_cli_args
+):
+    from coveo_recsys.cli import main
+
+    destination = tmp_path / "historical"
+    original = LocalArtifactStore._atomic_write
+
+    def interrupt(store, path, data):
+        if path == "historical/catalog.parquet.artifact.json":
+            raise OSError("simulated interrupted publication")
+        original(store, path, data)
+
+    monkeypatch.setattr(LocalArtifactStore, "_atomic_write", interrupt)
+    assert main(historical_cli_args) != 0
+    assert "simulated interrupted publication" in capsys.readouterr().out
+    monkeypatch.setattr(LocalArtifactStore, "_atomic_write", original)
+    before = {
+        path: (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in destination.rglob("*")
+        if path.is_file()
+    }
+    assert main(historical_cli_args) != 0
+    assert "новый каталог запуска" in capsys.readouterr().out
+    # Повтор может добавить запись о неудачной команде, но не менять её остатки.
+    assert all(
+        (path.read_bytes(), path.stat().st_mtime_ns) == value for path, value in before.items()
+    )
+    assert not (destination / "historical/catalog.parquet.artifact.json").exists()
+    assert not (destination / "historical/package.json").exists()
 
 
 @pytest.mark.parametrize("defect", ["dimension", "price"])

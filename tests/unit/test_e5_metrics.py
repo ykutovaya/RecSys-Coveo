@@ -201,6 +201,21 @@ def test_history_slices_count_available_history_not_only_last_block():
     assert "history=2-5" in evaluation.slices
 
 
+@pytest.mark.parametrize("views", [20, 21, 25])
+@pytest.mark.parametrize("semantics", ["set_v1", "multiset_v1"])
+@pytest.mark.parametrize("multiplicity", [1, 2])
+def test_history_slice_uses_all_detail_counts_not_bounded_tail(views, semantics, multiplicity):
+    rows = [(1000 + i, "detail", "a") for i in range(views) for _ in range(multiplicity)]
+    # Корзина, покупки и поиск не увеличивают число просмотров.
+    rows.extend((2000 + i, kind, "c") for i in range(30) for kind in ("add", "remove", "purchase"))
+    req = request(rows, semantics=semantics, search_time=2100, query=(1.0, 0.0))
+    size = views * (multiplicity if semantics == "multiset_v1" else 1)
+    assert sum(item.count for item in req.prefix.detail_history) == 20
+    evaluation, _ = evaluate(req, result(req, ("b",), ("b",)))
+    assert f"history={'21+' if size > 20 else '6-20'}" in evaluation.slices
+    assert (evaluation.v_s, evaluation.u_s, evaluation.hit_s) == (1, 1, 1)
+
+
 def test_popularity_terciles_and_modality_slices_use_historical_snapshot():
     labels = build_sku_slices(package())
     assert "target_popularity=high" in labels["a"]
