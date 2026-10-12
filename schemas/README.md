@@ -29,5 +29,6 @@ the 54 columns for the variant without metadata are in [configs/feature_schema_n
 profile has no categorical columns; the validator checks that its schema, quotas,
 and recipe match the manifest.
 
-Source CSV formats are defined by profiles in [/configs/](/configs/), not in this
-directory. Requirements: [implementation specification](/documents/en/implementation_spec.md#4-run-manifest-and-stage-control).
+Source CSV formats are defined by profiles in `configs/`, not here. See the
+[configuration guide](/configs/README.md). Requirements:
+[implementation specification](/documents/en/implementation_spec.md#4-run-manifest-and-stage-control).

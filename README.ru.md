@@ -178,7 +178,7 @@ CSV и обученная модель в Git не распространяют�
   и [LaTeX](/documents/math/coveo_session_recommender_math.tex).
 - Английская математическая спецификация: [PDF](/documents/en/math/coveo_session_recommender_math.pdf)
   и [LaTeX](/documents/en/math/coveo_session_recommender_math.tex).
-- [Настройки](/configs/README.md), [схемы](/schemas/README.ru.md),
+- [Настройки](/configs/README.ru.md), [схемы](/schemas/README.ru.md),
   [шаблон паспорта](/documents/math/coveo_session_recommender_run_manifest.template.json).
 
 Код проекта распространяется по [лицензии MIT](https://github.com/ykutovaya/RecSys-Coveo?tab=MIT-1-ov-file#MIT-1-ov-file).
