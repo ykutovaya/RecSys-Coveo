@@ -67,6 +67,15 @@ def windows_api(monkeypatch, readings):
     )
 
 
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_windows_api_rejects_nonwindows_before_loading_dll(monkeypatch, platform):
+    api = windows_api(monkeypatch, [])
+    monkeypatch.setattr(process_memory, "sys", SimpleNamespace(platform=platform))
+    with pytest.raises(OSError, match="Windows memory API"):
+        process_memory._windows_memory_api()
+    assert api.loads == []
+
+
 def test_windows_reuses_api_setup_but_measures_each_call(monkeypatch):
     api = windows_api(monkeypatch, [100, 200, 300])
     assert [process_memory.peak_memory() for _ in range(3)] == [

@@ -8,6 +8,9 @@ from typing import Any
 @cache
 def _windows_memory_api() -> tuple[Any, Any, Any]:
     """Однократная настройка WinAPI; сами показания не кешируются."""
+    if sys.platform != "win32":
+        raise OSError("Windows memory API is unavailable on this platform")
+
     import ctypes
     from ctypes import wintypes
 
