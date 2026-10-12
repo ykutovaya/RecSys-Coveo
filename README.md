@@ -197,7 +197,7 @@ These are optional research directions, not implemented capabilities; see
   [LaTeX](/documents/en/math/coveo_session_recommender_math.tex);
   Russian [PDF](/documents/math/coveo_session_recommender_math.pdf) /
   [LaTeX](/documents/math/coveo_session_recommender_math.tex).
-- Shared [configuration files](/configs/README.md) (directory guide in Russian) and
+- Shared [configuration files](/configs/README.md) and
   [schemas](/schemas/README.md);
   [run manifest template](/documents/math/coveo_session_recommender_run_manifest.template.json).
 
