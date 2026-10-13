@@ -201,6 +201,7 @@ These are optional research directions, not implemented capabilities; see
   [schemas](/schemas/README.md);
   [run manifest template](/documents/math/coveo_session_recommender_run_manifest.template.json).
 
-The project code is released under the [MIT license](https://github.com/ykutovaya/RecSys-Coveo?tab=MIT-1-ov-file#MIT-1-ov-file).
-Obtain the data separately under Coveo's terms. The code license does not
-replace the terms for using the data or distributing derived artifacts.
+[MIT](/LICENSE) applies to the project’s source code. The Coveo dataset is not
+distributed with this repository and is subject to Coveo’s separate
+[Terms & Conditions](https://github.com/coveooss/SIGIR-ecom-data-challenge/blob/main/Terms%20%26%20Conditions.txt).
+The code license does not replace the terms for distributing derived artifacts.
