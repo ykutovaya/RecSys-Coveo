@@ -181,6 +181,7 @@ CSV и обученная модель в Git не распространяют�
 - [Настройки](/configs/README.ru.md), [схемы](/schemas/README.ru.md),
   [шаблон паспорта](/documents/math/coveo_session_recommender_run_manifest.template.json).
 
-Код проекта распространяется по [лицензии MIT](https://github.com/ykutovaya/RecSys-Coveo?tab=MIT-1-ov-file#MIT-1-ov-file).
-Данные получают самостоятельно по условиям Coveo. Лицензия кода не заменяет
-условия использования данных и распространения производных артефактов.
+[Лицензия MIT](/LICENSE) распространяется на исходный код проекта. Набор данных
+Coveo не включён в репозиторий и регулируется отдельными
+[условиями Coveo](https://github.com/coveooss/SIGIR-ecom-data-challenge/blob/main/Terms%20%26%20Conditions.txt).
+Лицензия кода не заменяет условия распространения производных артефактов.
