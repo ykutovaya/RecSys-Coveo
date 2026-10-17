@@ -158,6 +158,19 @@ It supports retries without recomputation, falls back on a computation timeout,
 and refuses requests when state is incomplete. The request deadline is 1 s, with
 100 ms reserved for fallback, persistence, and returning the response.
 
+Excerpt from a verified response: the first 2 of 20 SKU identifiers and selected status fields.
+
+```json
+{
+  "items": [
+    "0005c742138a6bf913d314c829f41ff2d8e665e9b3670b7b337a9d59b7cff34d",
+    "52cf0c63ee45fba1d2d76bf59639f48fcc06233c58b9fd0251d3a3013acc4a1b"
+  ],
+  "branch": "primary",
+  "delivery": "delivered"
+}
+```
+
 The [request and verified response](/documents/en/reproduction.md#local-demo)
 use the trained real-data model. SKUs are anonymized; product names cannot
 be recovered. The example demonstrates the API, not recommendation quality.
